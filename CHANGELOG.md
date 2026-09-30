@@ -5,6 +5,8 @@ All notable changes to GhostScribe are documented in this file. The format is ba
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-30
+
 The first release.
 
 ### Added
@@ -34,4 +36,5 @@ The first release.
 - Attachments must be PNG, JPEG or WebP images; only audio files are served from the recordings folder.
 - Releases are built reproducibly with a SHA-256 checksum and a signed build provenance.
 
-[Unreleased]: https://github.com/2g4y1/GhostScribe/commits/main
+[Unreleased]: https://github.com/2g4y1/GhostScribe/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/2g4y1/GhostScribe/releases/tag/v1.0.0
