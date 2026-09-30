@@ -1,40 +1,30 @@
-# Environment Variables & Secrets (CRITICAL)
+# Secrets
 .env
 *.env.local
 
-# Python Virtual Environment
+# Python virtual environment
 .venv/
 venv/
-ENV/
-env/
 
-# Byte-compiled / optimized / DLL files
+# Byte-compiled files and tool caches
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
+.ruff_cache/
+.pytest_cache/
 
-# Private Audio Recordings & Meeting Protocols
-recordings/*.wav
-recordings/*.mp3
-recordings/attachments/
+# Private recordings, screenshots, chat context and meeting protocols
+recordings/*
 !recordings/.gitkeep
-meetings/*.md
-meetings/*.json
+meetings/*
 !meetings/.gitkeep
 
-# Distribution Archives
+# Release builds (published as GitHub release assets, never committed)
+dist/
 *.zip
 
-# OS & Editor generated files
+# OS and editor files
 .DS_Store
 Thumbs.db
 desktop.ini
 .vscode/
 .idea/
-*.swp
-*.swo
-
-# Scratch & Tool Caches
-scratch/
-.ruff_cache/

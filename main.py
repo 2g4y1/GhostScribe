@@ -28,6 +28,7 @@ if __name__ == "__main__":
         print("🎙️  GHOSTSCRIBE - BOT-FREE AI MEETING RECORDER (Gemini)")
         print("=" * 60)
         print(f"🚀 Öffne Web-Oberfläche auf {APP_URL} ...")
+        print("   Beenden: Strg+C drücken oder dieses Fenster schließen.")
         print("   Tipp: Du kannst das Tool auch im Terminal starten mit: python main.py --cli\n")
 
         # Browser nach kurzem Start automatisch öffnen

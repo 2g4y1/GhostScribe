@@ -1,107 +1,52 @@
 @echo off
-setlocal enabledelayedexpansion
-title GhostScribe - Installation ^& Requirements Setup
-chcp 65001 >nul
+setlocal
 cd /d "%~dp0"
 
+rem GhostScribe setup: creates .venv and installs the Python dependencies.
+rem Runs from start.bat ("/nopause") or on its own via double-click.
+
 echo ============================================================
-echo   🎙️  GHOSTSCRIBE - INSTALLATION ^& SETUP DER BIBLIOTHEKEN
+echo   GhostScribe - Einrichtung
 echo ============================================================
 echo.
 
-:: 1. Prüfen, ob Python vorhanden ist
+rem Python 3.11+ suchen. Zuerst der py-Launcher, weil "python" auch der
+rem Microsoft-Store-Platzhalter ohne echte Installation sein kann.
 set "PYTHON_CMD="
-python --version >nul 2>nul
-if %errorlevel% equ 0 (
-    set "PYTHON_CMD=python"
-) else (
-    py --version >nul 2>nul
-    if %errorlevel% equ 0 (
-        set "PYTHON_CMD=py"
-    )
-)
+py -3 -c "import sys; sys.exit(sys.version_info < (3, 11))" >nul 2>nul && set "PYTHON_CMD=py -3"
+if not defined PYTHON_CMD python -c "import sys; sys.exit(sys.version_info < (3, 11))" >nul 2>nul && set "PYTHON_CMD=python"
+if not defined PYTHON_CMD goto :no_python
+for /f "delims=" %%v in ('%PYTHON_CMD% --version 2^>^&1') do echo [1/3] %%v gefunden.
 
-if "%PYTHON_CMD%"=="" (
-    echo [FEHLER] Python wurde auf diesem Computer nicht gefunden!
-    echo.
-    echo GhostScribe benoetigt Python (empfohlen: Version 3.10 oder 3.11).
-    echo.
-    echo Installations-Optionen:
-    echo  1) Direkt herunterladen: https://www.python.org/downloads/
-    echo     WICHTIG: Setze beim Installer den Haken bei:
-    echo     [x] "Add python.exe to PATH"
-    echo.
-    where winget >nul 2>nul
-    if %errorlevel% equ 0 (
-        echo  2) Automatische Windows-Installation via winget:
-        echo     Fuehre in PowerShell oder CMD aus:
-        echo     winget install Python.Python.3.11
-    )
-    echo.
-    echo ============================================================
-    pause
-    exit /b 1
-)
+if exist ".venv\Scripts\python.exe" goto :install
+echo [2/3] Erstelle die virtuelle Umgebung .venv ...
+%PYTHON_CMD% -m venv .venv || goto :failed
 
-for /f "tokens=*" %%v in ('%PYTHON_CMD% --version 2^>^&1') do set "PY_VER=%%v"
-echo [OK] Gefundenes Python: %PY_VER%
-echo.
-
-:: 2. Virtuelle Umgebung (.venv) anlegen, falls noch nicht vorhanden
-if not exist ".venv\Scripts\python.exe" (
-    echo [1/3] Erstelle isolierte Python-Umgebung in .venv ...
-    %PYTHON_CMD% -m venv .venv
-    if %errorlevel% neq 0 (
-        echo [FEHLER] Konnte virtuelle Umgebung nicht erstellen.
-        pause
-        exit /b 1
-    )
-    echo      Erfolgreich erstellt.
-) else (
-    echo [1/3] Virtuelle Umgebung (.venv) ist bereits vorhanden.
-)
-echo.
-
-:: 3. Pip aktualisieren & Requirements installieren
-echo [2/3] Installiere benoetigte Bibliotheken (Audio, KI-SDK, Web-Server)...
-echo      Dies kann beim ersten Mal 1-2 Minuten dauern. Bitte warten...
-.\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
-.\.venv\Scripts\pip.exe install -r requirements.txt
-if %errorlevel% neq 0 (
-    echo.
-    echo [FEHLER] Paket-Installation fehlgeschlagen!
-    echo Bitte Internetverbindung pruefen und dieses Skript erneut starten.
-    pause
-    exit /b 1
-)
-
-:: Marker-Datei schreiben
-echo installed on %DATE% %TIME% > .venv\.installed
-echo      Alle Pakete erfolgreich installiert.
-echo.
-
-:: 4. .env Datei vorbereiten, falls noch nicht vorhanden
-echo [3/3] Pruefe Konfigurationsdateien...
-if not exist ".env" (
-    if exist ".env.example" (
-        copy ".env.example" ".env" >nul
-        echo      .env Konfigurationsdatei aus Vorlage (.env.example) erstellt.
-    )
-) else (
-    echo      .env Datei bereits vorhanden.
-)
-
-:: Ordner anlegen
-if not exist "meetings" mkdir "meetings"
-if not exist "recordings" mkdir "recordings"
+:install
+echo [3/3] Installiere die Bibliotheken, beim ersten Mal dauert das 1-2 Minuten ...
+".venv\Scripts\python.exe" -m pip install --upgrade pip --quiet --disable-pip-version-check || goto :failed
+".venv\Scripts\python.exe" -m pip install -r requirements.txt --disable-pip-version-check || goto :failed
+copy /y requirements.txt ".venv\installed-requirements.txt" >nul
+if not exist ".env" copy ".env.example" ".env" >nul
 
 echo.
-echo ============================================================
-echo   ✅ INSTALLATION ERFOLGREICH ABGESCHLOSSEN!
-echo ============================================================
+echo Einrichtung abgeschlossen. GhostScribe startet mit start.bat
+if /i not "%~1"=="/nopause" pause
+exit /b 0
+
+:no_python
+echo [FEHLER] Python 3.11 oder neuer wurde nicht gefunden.
 echo.
-echo GhostScribe ist jetzt einsatzbereit.
-echo Du kannst die App nun jederzeit starten mit:
-echo   -> start.bat
+echo Download: https://www.python.org/downloads/
+echo Im Installer "Add python.exe to PATH" anhaken, oder in PowerShell:
+echo   winget install Python.Python.3.12
+goto :end_failed
+
+:failed
 echo.
-pause
+echo [FEHLER] Die Einrichtung ist fehlgeschlagen. Bitte die Internetverbindung
+echo pruefen und das Skript erneut starten.
+
+:end_failed
+if /i not "%~1"=="/nopause" pause
+exit /b 1

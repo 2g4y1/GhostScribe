@@ -18,6 +18,42 @@ import pyaudiowpatch as pyaudio
 
 from utils import format_duration
 
+RESAMPLE_BLOCK = 1 << 20  # Output samples per processing block; bounds memory use for long meetings
+
+
+def _lowpass_kernel(cutoff: float, taps: int = 127) -> np.ndarray:
+    """Windowed-sinc FIR lowpass; cutoff as a fraction of the input sample rate (0..0.5)."""
+    n = np.arange(taps) - (taps - 1) / 2
+    kernel = np.sinc(2 * cutoff * n) * np.blackman(taps)
+    return (kernel / kernel.sum()).astype(np.float32)
+
+
+def resample_to_mono(frames: np.ndarray, orig_sr: int, target_sr: int, mix_channels: bool) -> np.ndarray:
+    """
+    Converts (samples, channels) int16 audio to mono int16 at target_sr.
+    mix_channels averages the first two channels, otherwise channel 0 is used.
+    Before downsampling, everything above the target Nyquist frequency is filtered out;
+    plain interpolation would fold those frequencies back into the speech band (aliasing).
+    """
+    n_in = len(frames)
+    ratio = orig_sr / target_sr
+    n_out = int(n_in / ratio)
+    out = np.zeros(n_out, dtype=np.int16)
+    kernel = _lowpass_kernel(0.44 / ratio) if ratio > 1 else None
+    pad = len(kernel) if kernel is not None else 1
+
+    for start in range(0, n_out, RESAMPLE_BLOCK):
+        positions = np.arange(start, min(start + RESAMPLE_BLOCK, n_out)) * ratio
+        lo = max(int(positions[0]) - pad, 0)
+        hi = min(int(positions[-1]) + 2 + pad, n_in)
+        block = frames[lo:hi].astype(np.float32)
+        mono = block[:, :2].mean(axis=1) if mix_channels and block.shape[1] > 1 else block[:, 0]
+        if kernel is not None:
+            mono = np.convolve(mono, kernel, mode="same")
+        resampled = np.interp(positions - lo, np.arange(len(mono)), mono)
+        out[start : start + len(positions)] = np.clip(resampled, -32768, 32767)
+    return out
+
 
 class MeetingRecorder:
     def __init__(self, target_sample_rate=16000, output_dir="recordings"):
@@ -27,18 +63,18 @@ class MeetingRecorder:
 
         self.p = None
         self.is_recording = False
-        self.start_time = None
-        self.end_time = None
+        self.start_time = 0.0
+        self.end_time = 0.0
 
         self.mic_stream = None
         self.loopback_stream = None
         self.mic_frames = []
         self.loopback_frames = []
 
-        self.mic_info = None
-        self.loopback_info = None
-        self.mic_channels = self.mic_rate = None
-        self.loopback_channels = self.loopback_rate = None
+        self.mic_info = {}
+        self.loopback_info = {}
+        self.mic_channels = self.mic_rate = 0
+        self.loopback_channels = self.loopback_rate = 0
 
         # Level meters (0.0 to 1.0)
         self.mic_level = 0.0
@@ -58,11 +94,14 @@ class MeetingRecorder:
 
     @staticmethod
     def find_devices(p_instance=None):
-        """Finds default input (mic) and WASAPI loopback device for default output."""
+        """Finds the default WASAPI microphone and the loopback device of the default output."""
         p = p_instance if p_instance is not None else pyaudio.PyAudio()
         try:
             default_loopback = MeetingRecorder.find_loopback_device(p)
-            default_input = p.get_default_input_device_info()
+            wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+            if wasapi_info["defaultInputDevice"] < 0:
+                raise RuntimeError("Kein Mikrofon gefunden!")
+            default_input = p.get_device_info_by_index(wasapi_info["defaultInputDevice"])
             if not default_loopback:
                 raise RuntimeError("Kein passendes WASAPI Loopback-Gerät für die Standard-Ausgabe gefunden!")
             return default_input, default_loopback
@@ -72,6 +111,31 @@ class MeetingRecorder:
                     p.terminate()
                 except Exception:
                     pass
+
+    @staticmethod
+    def list_devices():
+        """Returns the selectable microphones and loopback devices; the Windows defaults are flagged."""
+        p = pyaudio.PyAudio()
+        try:
+            wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+            default_loopback = MeetingRecorder.find_loopback_device(p)
+            microphones = []
+            for i in range(wasapi_info["deviceCount"]):
+                device = p.get_device_info_by_host_api_device_index(wasapi_info["index"], i)
+                if device["maxInputChannels"] > 0 and not device.get("isLoopbackDevice", False):
+                    is_default = device["index"] == wasapi_info["defaultInputDevice"]
+                    microphones.append({"index": device["index"], "name": device["name"], "default": is_default})
+            loopbacks = [
+                {
+                    "index": device["index"],
+                    "name": device["name"],
+                    "default": default_loopback is not None and device["index"] == default_loopback["index"],
+                }
+                for device in p.get_loopback_device_info_generator()
+            ]
+            return {"microphones": microphones, "loopbacks": loopbacks}
+        finally:
+            p.terminate()
 
     def _make_callback(self, frames, level_attr):
         """Creates a stream callback that buffers the audio and updates the given level meter."""
@@ -101,14 +165,24 @@ class MeetingRecorder:
                 pass
         self.mic_stream = self.loopback_stream = self.p = None
 
-    def start(self):
-        """Starts recording asynchronously."""
+    def start(self, mic_index=None, loopback_index=None):
+        """Starts recording asynchronously. A device index of None means the Windows default device."""
         if self.is_recording:
             return
 
         self._release_streams()
         self.p = pyaudio.PyAudio()
-        self.mic_info, self.loopback_info = self.find_devices(p_instance=self.p)
+        try:
+            default_mic = default_loopback = {}
+            if mic_index is None or loopback_index is None:
+                default_mic, default_loopback = self.find_devices(p_instance=self.p)
+            self.mic_info = self.p.get_device_info_by_index(mic_index) if mic_index is not None else default_mic
+            self.loopback_info = (
+                self.p.get_device_info_by_index(loopback_index) if loopback_index is not None else default_loopback
+            )
+        except OSError as e:
+            self._release_streams()
+            raise RuntimeError("Das gewählte Audiogerät ist nicht mehr verfügbar. Bitte Gerät neu auswählen.") from e
 
         self.mic_frames = []
         self.loopback_frames = []
@@ -166,69 +240,42 @@ class MeetingRecorder:
             return 0.0
         return time.time() - self.start_time
 
-    def stop(self, custom_filename=None, compress=True):
-        """Stops recording, synchronizes audio, and writes stereo WAV/MP3."""
+    def stop_capture(self):
+        """Stops both streams; the captured audio stays buffered until save() is called."""
         if not self.is_recording:
-            return None
-
+            return False
         self.end_time = time.time()
-        duration_total = self.end_time - self.start_time
         self.is_recording = False
         self._release_streams()
+        return True
 
-        # Filename
-        if not custom_filename:
-            timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            output_filepath = os.path.join(self.output_dir, f"meeting_{timestamp_str}.wav")
-        else:
-            output_filepath = os.path.join(self.output_dir, custom_filename)
+    def _take_frames(self, attr, channels):
+        """Returns the buffered chunks of one stream as (samples, channels) int16 and frees the buffer."""
+        chunks = getattr(self, attr)
+        raw = b"".join(chunks)
+        chunks.clear()
+        return np.frombuffer(raw, dtype=np.int16).reshape(-1, channels)
 
-        # Mic Data
-        if self.mic_frames:
-            mic_raw = b"".join(self.mic_frames)
-            mic_data = np.frombuffer(mic_raw, dtype=np.int16)
-            if self.mic_channels > 1:
-                mic_data = mic_data.reshape(-1, self.mic_channels)[:, 0]
-        else:
-            mic_data = np.zeros(0, dtype=np.int16)
+    def save(self, compress=True, filename=None):
+        """Synchronizes both channels into a 16-bit stereo WAV (plus MP3 copy) and returns the file to upload."""
+        name = filename or datetime.fromtimestamp(self.start_time).strftime("meeting_%Y-%m-%d_%H-%M-%S.wav")
+        output_filepath = os.path.join(self.output_dir, name)
 
-        # Loopback Data
-        if self.loopback_frames:
-            loop_raw = b"".join(self.loopback_frames)
-            loop_data = np.frombuffer(loop_raw, dtype=np.int16)
-            if self.loopback_channels > 1:
-                loop_data = loop_data.reshape(-1, self.loopback_channels)
-                loop_data = (loop_data[:, 0].astype(np.int32) + loop_data[:, 1].astype(np.int32)) // 2
-                loop_data = loop_data.astype(np.int16)
-        else:
-            loop_data = np.zeros(0, dtype=np.int16)
-
-        def resample_to_target(data, orig_sr, target_sr):
-            if len(data) == 0:
-                return np.zeros(0, dtype=np.int16)
-            if orig_sr == target_sr:
-                return data
-            target_len = int(len(data) * target_sr / orig_sr)
-            orig_indices = np.linspace(0, len(data) - 1, len(data))
-            target_indices = np.linspace(0, len(data) - 1, target_len)
-            return np.interp(target_indices, orig_indices, data).astype(np.int16)
-
-        mic_resampled = resample_to_target(mic_data, self.mic_rate, self.target_sample_rate)
-        loop_resampled = resample_to_target(loop_data, self.loopback_rate, self.target_sample_rate)
-
-        # Pad to equal length
-        target_total_samples = max(
-            len(mic_resampled), len(loop_resampled), int(duration_total * self.target_sample_rate)
+        mic = resample_to_mono(
+            self._take_frames("mic_frames", self.mic_channels), self.mic_rate, self.target_sample_rate, False
+        )
+        loop = resample_to_mono(
+            self._take_frames("loopback_frames", self.loopback_channels),
+            self.loopback_rate,
+            self.target_sample_rate,
+            True,
         )
 
-        mic_padded = np.zeros(target_total_samples, dtype=np.int16)
-        mic_padded[: len(mic_resampled)] = mic_resampled
-
-        loop_padded = np.zeros(target_total_samples, dtype=np.int16)
-        loop_padded[: len(loop_resampled)] = loop_resampled
-
-        # Merge to 2-channel stereo (Left = Mic, Right = Loopback)
-        stereo = np.column_stack((mic_padded, loop_padded))
+        # Pad to equal length; Left = Mic, Right = Loopback
+        total = max(len(mic), len(loop), int((self.end_time - self.start_time) * self.target_sample_rate))
+        stereo = np.zeros((total, 2), dtype=np.int16)
+        stereo[: len(mic), 0] = mic
+        stereo[: len(loop), 1] = loop
 
         with wave.open(output_filepath, "wb") as wf:
             wf.setnchannels(2)
@@ -237,10 +284,13 @@ class MeetingRecorder:
             wf.writeframes(stereo.tobytes())
 
         # Optional MP3-Kompression für 10x schnellere Uploads
-        if compress:
-            return self.compress_to_mp3(output_filepath)
+        return self.compress_to_mp3(output_filepath) if compress else output_filepath
 
-        return output_filepath
+    def stop(self, custom_filename=None, compress=True):
+        """Stops recording and writes the audio files in one step (used by the CLI)."""
+        if not self.stop_capture():
+            return None
+        return self.save(compress=compress, filename=custom_filename)
 
     def cancel(self):
         """Cancels recording immediately and releases all hardware resources."""

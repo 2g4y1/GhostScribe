@@ -1,22 +1,16 @@
 [project]
 name = "ghostscribe"
 version = "1.0.0"
-description = "GhostScribe: Invisible, Bot-Free AI Meeting Recorder & Gemini Minutes Generator"
+description = "Bot-free meeting recorder for Windows that turns Teams/Zoom calls into structured minutes with Google Gemini"
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "fastapi>=0.110.0",
-    "uvicorn>=0.28.0",
-    "pydantic>=2.6.0",
-    "google-genai>=0.1.1",
-    "python-dotenv>=1.0.1",
-    "PyAudioWPatch>=0.2.12.8",
-    "numpy>=1.26.0",
-]
+license = "MIT"
+requires-python = ">=3.11"
+# Runtime dependencies are pinned in requirements.txt (installed by install_requirements.bat),
+# development tools in requirements-dev.txt.
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -36,3 +30,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

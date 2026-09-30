@@ -12,7 +12,7 @@ from analyzer import MeetingAnalyzer
 from recorder import MeetingRecorder
 from utils import ensure_utf8_console, format_duration, update_env_file
 
-load_dotenv()
+load_dotenv(".env")
 
 
 def level_bar(level, width=15):

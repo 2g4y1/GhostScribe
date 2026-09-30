@@ -1,0 +1,5 @@
+# Store text files with LF line endings in the repository
+* text=auto
+
+# cmd.exe needs CRLF line endings in batch files
+*.bat text eol=crlf

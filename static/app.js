@@ -6,10 +6,30 @@
     let hasApiKeyConfigured = false;
     let currentConfiguredModel = "gemini-flash-latest";
     const API_KEY_MASK = "••••••••••••••••••••••••";
+    let lastAutoLoadedMeetingId = null; // frisch analysiertes Meeting nur einmal automatisch öffnen
+    let aiActDefaultApplied = false;
+    const DEVICE_STORAGE_KEYS = { mic: "ghostscribe_mic_device", loopback: "ghostscribe_loopback_device" };
+    const TRASH_ICON = '<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>';
+
+    // Creates an element; text is always set as textContent and never parsed as HTML
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function isBusy() {
+      return currentStatus === "recording" || currentStatus === "processing";
+    }
+
+    function meetingDate(meta, options) {
+      return new Date(meta.meeting_start || meta.created_at).toLocaleString("de-DE", options);
+    }
 
     function syncModelSelect(modelName) {
       if (!modelSelect || !modelName) return;
-      let opt = modelSelect.querySelector(`option[value="${modelName}"]`);
+      let opt = [...modelSelect.options].find(o => o.value === modelName);
       if (!opt) {
         opt = document.createElement("option");
         opt.value = modelName;
@@ -33,8 +53,11 @@
     // DOM Elements
     const statusBadge = document.getElementById("statusBadge");
     const statusText = document.getElementById("statusText");
-    const micName = document.getElementById("micName");
-    const loopbackName = document.getElementById("loopbackName");
+    const micSelect = document.getElementById("micSelect");
+    const loopbackSelect = document.getElementById("loopbackSelect");
+    const errorBanner = document.getElementById("errorBanner");
+    const unprocessedSection = document.getElementById("unprocessedSection");
+    const unprocessedList = document.getElementById("unprocessedList");
     const micVuFill = document.getElementById("micVuFill");
     const teamsVuFill = document.getElementById("teamsVuFill");
     const timerDisplay = document.getElementById("timerDisplay");
@@ -102,7 +125,7 @@
       }
     }
 
-    const savedUserName = localStorage.getItem("ghostscribe_user_name") || localStorage.getItem("soundy_user_name") || "";
+    const savedUserName = localStorage.getItem("ghostscribe_user_name") || "";
     if (userSpeakerName) {
       userSpeakerName.value = savedUserName;
       adjustUserSpeakerInputWidth();
@@ -157,12 +180,12 @@
       const isAiAct = aiActModeToggle.checked;
       if (isAiAct) {
         aiActToggleContainer.classList.remove("mode-sentiment");
-        if (aiActModeTitle) aiActModeTitle.innerHTML = "🛡️ EU AI Act Modus: Aktiv (Standard)";
+        if (aiActModeTitle) aiActModeTitle.textContent = "🛡️ EU AI Act Modus: Aktiv (Standard)";
         if (aiActModeDesc) aiActModeDesc.innerText = "Sachlich, neutral & rechtssicher – keine Emotions- oder Stimmungsanalyse am Arbeitsplatz.";
         aiActToggleContainer.title = "Klicken zum Umschalten: Gemäß EU AI Act (Art. 5 KI-VO) verzichtet dieser Modus auf jegliche Emotions- und Stimmungsanalyse am Arbeitsplatz.";
       } else {
         aiActToggleContainer.classList.add("mode-sentiment");
-        if (aiActModeTitle) aiActModeTitle.innerHTML = "⚠️ Stimmungsanalyse: Aktiv (EU AI Act deaktiviert)";
+        if (aiActModeTitle) aiActModeTitle.textContent = "⚠️ Stimmungsanalyse: Aktiv (EU AI Act deaktiviert)";
         if (aiActModeDesc) aiActModeDesc.innerText = "Erfasst Emotionen & Frustration. Gemäß Art. 5 KI-VO am Arbeitsplatz unzulässig!";
         aiActToggleContainer.title = "Klicken zum Reaktivieren des rechtssicheren EU AI Act Modus.";
       }
@@ -552,24 +575,29 @@
         tabImgCount.style.display = attachedImages.length > 0 ? "inline-block" : "none";
       }
       attachedImages.forEach((img, idx) => {
-        const card = document.createElement("div");
-        card.className = "thumbnail-card";
+        const card = el("div", "thumbnail-card");
         card.title = `${img.filename} (${img.size}) - Klicken zum Vergrößern`;
-        card.innerHTML = `
-          <img src="${img.data}" alt="${img.filename}" class="thumbnail-img" />
-          <span class="thumbnail-badge">#${idx + 1}</span>
-          <button type="button" class="thumbnail-del" title="Entfernen" onclick="event.stopPropagation(); removeAttachment('${img.id}')">✕</button>
-        `;
+        const image = el("img", "thumbnail-img");
+        image.src = img.data;
+        image.alt = img.filename;
+        const removeBtn = el("button", "thumbnail-del", "✕");
+        removeBtn.type = "button";
+        removeBtn.title = "Entfernen";
+        removeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          removeAttachment(img.id);
+        });
+        card.append(image, el("span", "thumbnail-badge", `#${idx + 1}`), removeBtn);
         card.onclick = () => openLightbox(img.data, `${img.filename} (#${idx + 1}) • ${img.size}`);
         thumbnailsContainer.appendChild(card);
       });
     }
 
-    window.removeAttachment = function(id) {
+    function removeAttachment(id) {
       attachedImages = attachedImages.filter(item => item.id !== id);
       renderThumbnails();
       updateAttachmentsBadge();
-    };
+    }
 
     function clearAttachments() {
       attachedImages = [];
@@ -726,8 +754,10 @@
     });
 
     // Toggle Record
+    const selectedDevice = (select) => (select.value === "" ? null : Number(select.value));
+
     recordToggleBtn.addEventListener("click", async () => {
-      if (currentStatus === "idle") {
+      if (!isBusy()) {
         if (!hasApiKeyConfigured) {
           welcomeBanner.style.display = "block";
           settingsModal.classList.add("active");
@@ -748,7 +778,9 @@
               participants: participants,
               meeting_type: meetingType,
               user_name: userName,
-              ai_act_mode: isAiAct
+              ai_act_mode: isAiAct,
+              mic_device: selectedDevice(micSelect),
+              loopback_device: selectedDevice(loopbackSelect)
             })
           });
           if (!res.ok) {
@@ -806,7 +838,7 @@
     copyMdBtn.addEventListener("click", async () => {
       if (!rawCurrentMarkdown) return;
       try {
-        const htmlContent = marked.parse(rawCurrentMarkdown);
+        const htmlContent = DOMPurify.sanitize(marked.parse(rawCurrentMarkdown));
         const blobHtml = new Blob([htmlContent], { type: "text/html" });
         const blobText = new Blob([rawCurrentMarkdown], { type: "text/plain" });
 
@@ -851,23 +883,25 @@
     // Load meeting details
     async function loadMeeting(id) {
       try {
-        const res = await fetch(`/api/meetings/${id}`);
+        const res = await fetch(`/api/meetings/${encodeURIComponent(id)}`);
         if (!res.ok) return;
         const data = await res.json();
-        
+        const meta = data.metadata;
+
         activeMeetingId = id;
         rawCurrentMarkdown = data.markdown;
-        
-        viewTitle.innerText = data.metadata.title || id;
-        const date = new Date(data.metadata.created_at).toLocaleString("de-DE");
-        const extra = data.metadata.participants ? ` • Teilnehmer: ${data.metadata.participants}` : "";
-        const isAiAct = data.metadata.ai_act_mode !== false;
-        const modeBadge = isAiAct 
-          ? `<span class="badge-tag ai-act" title="Rechtssicher gemäß EU AI Act Art. 5: Keine Emotionsanalyse am Arbeitsplatz">🛡️ EU AI Act konform</span>`
-          : `<span class="badge-tag sentiment" title="Erweiterte Analyse inkl. Gruppendynamik und Frustration">🎭 Mit Stimmungsanalyse</span>`;
-        viewMeta.innerHTML = `Erstellt am ${date} • Modell: ${data.metadata.model_used}${extra} ${modeBadge}`;
-        
-        markdownBody.innerHTML = marked.parse(data.markdown);
+
+        viewTitle.innerText = meta.title || id;
+        const isAiAct = meta.ai_act_mode !== false;
+        const modeBadge = el("span", `badge-tag ${isAiAct ? "ai-act" : "sentiment"}`, isAiAct ? "🛡️ EU AI Act konform" : "🎭 Mit Stimmungsanalyse");
+        modeBadge.title = isAiAct
+          ? "Rechtssicher gemäß EU AI Act Art. 5: Keine Emotionsanalyse am Arbeitsplatz"
+          : "Erweiterte Analyse inkl. Gruppendynamik und Frustration";
+        const details = [`Meeting vom ${meetingDate(meta)}`, `Modell: ${meta.model_used}`];
+        if (meta.participants) details.push(`Teilnehmer: ${meta.participants}`);
+        viewMeta.replaceChildren(details.join(" • ") + " ", modeBadge);
+
+        markdownBody.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown));
         applyViewerSearchHighlight(true);
         copyMdBtn.style.display = "flex";
         downloadMdBtn.style.display = "flex";
@@ -995,7 +1029,7 @@
         return;
       }
       try {
-        const res = await fetch(`/api/meetings/${id}`, { method: "DELETE" });
+        const res = await fetch(`/api/meetings/${encodeURIComponent(id)}`, { method: "DELETE" });
         if (res.ok) {
           if (activeMeetingId === id) {
             resetViewer();
@@ -1039,45 +1073,128 @@
           cachedMeetings = await res.json();
           meetingCount.innerText = cachedMeetings.length;
           renderMeetingsList();
-
-          const params = new URLSearchParams(window.location.search);
-          const urlUser = params.get("user_name");
-          if (urlUser) {
-            syncUserName(urlUser);
-          }
-          const autoMeeting = params.get("meeting");
-          if (autoMeeting && !activeMeetingId) {
-            loadMeeting(autoMeeting);
-          }
-          if (params.get("open_drawer") === "1") {
-            openAttachmentsAccordion();
-          }
-          if (params.get("open_settings") === "1") {
-            settingsModal.classList.add("active");
-          }
-          if (params.get("scroll") === "protocol") {
-            setTimeout(() => {
-              const el = document.getElementById("markdownBody");
-              if (el) el.scrollIntoView({ behavior: "instant", block: "start" });
-            }, 600);
-          }
         }
       } catch (e) {
         console.error("Fehler bei Meetings:", e);
       }
+      fetchUnprocessed();
     }
+
+    // Deep links, e.g. ?meeting=<id>&scroll=protocol (also used for documentation screenshots)
+    function applyUrlParams() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("meeting")) loadMeeting(params.get("meeting"));
+      if (params.get("open_drawer") === "1") openAttachmentsAccordion();
+      if (params.get("open_settings") === "1") settingsModal.classList.add("active");
+      if (params.get("scroll") === "protocol") {
+        setTimeout(() => markdownBody.scrollIntoView({ behavior: "instant", block: "start" }), 600);
+      }
+    }
+
+    // Recordings without protocol, e.g. after a rate limit: analyze again or delete
+    async function fetchUnprocessed() {
+      try {
+        const res = await fetch("/api/unprocessed-recordings");
+        if (res.ok) renderUnprocessed(await res.json());
+      } catch (err) {
+        console.error("Fehler bei unverarbeiteten Aufnahmen:", err);
+      }
+    }
+
+    function renderUnprocessed(recordings) {
+      unprocessedList.replaceChildren(...recordings.map(rec => {
+        const item = el("div", "unprocessed-item");
+        const info = el("div", "unprocessed-info");
+        const sizeMb = (rec.size_kb / 1024).toLocaleString("de-DE", { maximumFractionDigits: 1 });
+        info.append(el("div", "unprocessed-name", rec.title || rec.filename), el("div", "meeting-item-date", `${rec.time} • ${sizeMb} MB`));
+        info.title = rec.filename;
+        const analyzeBtn = el("button", "mini-action-btn", "Analysieren");
+        analyzeBtn.addEventListener("click", () => analyzeRecording(rec.filename));
+        const deleteBtn = el("button", "mini-action-btn danger", "✕");
+        deleteBtn.title = "Aufnahme löschen";
+        deleteBtn.addEventListener("click", () => deleteRecording(rec.filename));
+        item.append(info, analyzeBtn, deleteBtn);
+        return item;
+      }));
+      unprocessedSection.hidden = isBusy() || recordings.length === 0;
+    }
+
+    async function analyzeRecording(filename) {
+      if (!hasApiKeyConfigured) {
+        settingsModal.classList.add("active");
+        return;
+      }
+      try {
+        const res = await fetch(`/api/recordings/${encodeURIComponent(filename)}/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ai_act_mode: aiActModeToggle.checked, user_name: userSpeakerName.value.trim() })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert("Analyse konnte nicht gestartet werden: " + (err.detail || "Unbekannt"));
+        }
+        pollStatus();
+      } catch (err) {
+        alert("Netzwerkfehler: " + err);
+      }
+    }
+
+    async function deleteRecording(filename) {
+      if (!confirm(`Möchtest du die Aufnahme "${filename}" samt Audiodateien und Screenshots endgültig löschen?`)) {
+        return;
+      }
+      try {
+        const res = await fetch(`/api/recordings/${encodeURIComponent(filename)}`, { method: "DELETE" });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert("Fehler beim Löschen: " + (err.detail || "Unbekannt"));
+        }
+        fetchUnprocessed();
+      } catch (err) {
+        alert("Netzwerkfehler beim Löschen: " + err);
+      }
+    }
+
+    // Audio devices: "" = Windows default, otherwise the device index
+    const deviceLabel = (name) => name.replace(" [Loopback]", "");
+
+    function fillDeviceSelect(select, devices, storageKey) {
+      const saved = localStorage.getItem(storageKey) || "";
+      const defaultDevice = devices.find(d => d.default);
+      select.replaceChildren(new Option(defaultDevice ? `${deviceLabel(defaultDevice.name)} (Standard)` : "Windows-Standard", ""));
+      devices.filter(d => !d.default).forEach(d => select.add(new Option(deviceLabel(d.name), String(d.index))));
+      select.value = devices.some(d => !d.default && String(d.index) === saved) ? saved : "";
+    }
+
+    async function loadDevices() {
+      if (isBusy()) return;
+      try {
+        const res = await fetch("/api/devices");
+        if (!res.ok) return;
+        const data = await res.json();
+        fillDeviceSelect(micSelect, data.microphones, DEVICE_STORAGE_KEYS.mic);
+        fillDeviceSelect(loopbackSelect, data.loopbacks, DEVICE_STORAGE_KEYS.loopback);
+      } catch (err) {
+        console.error("Geräteliste konnte nicht geladen werden:", err);
+      }
+    }
+
+    // While recording/processing the selects show the devices actually in use
+    function lockDeviceSelects(micDevice, loopbackDevice) {
+      [[micSelect, micDevice], [loopbackSelect, loopbackDevice]].forEach(([select, name]) => {
+        select.disabled = true;
+        if (name && (select.options.length !== 1 || select.options[0].textContent !== deviceLabel(name))) {
+          select.replaceChildren(new Option(deviceLabel(name), ""));
+        }
+      });
+    }
+
+    micSelect.addEventListener("change", () => localStorage.setItem(DEVICE_STORAGE_KEYS.mic, micSelect.value));
+    loopbackSelect.addEventListener("change", () => localStorage.setItem(DEVICE_STORAGE_KEYS.loopback, loopbackSelect.value));
 
     function escapeRegExp(string) {
       return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }
-
-    function highlightHtmlString(text, query) {
-      if (!query || !text) return text || "";
-      const trimmed = query.trim();
-      if (trimmed.length < 2) return text;
-      const escaped = escapeRegExp(trimmed);
-      const regex = new RegExp(`(${escaped})`, "gi");
-      return text.replace(regex, '<mark class="search-highlight">$1</mark>');
     }
 
     function highlightTextInElement(container, query) {
@@ -1216,47 +1333,36 @@
     }
 
     function renderMeetingsList() {
-      meetingsList.innerHTML = "";
       const query = (searchInput.value || "").toLowerCase().trim();
-      const filtered = cachedMeetings.filter(m => {
-        if (!query) return true;
-        const t = (m.title || "").toLowerCase();
-        const p = (m.participants || "").toLowerCase();
-        const d = (m.created_at || "").toLowerCase();
-        const c = (m.content || "").toLowerCase();
-        return t.includes(query) || p.includes(query) || d.includes(query) || c.includes(query);
-      });
+      const matches = (m, fields) => fields.some(f => (m[f] || "").toLowerCase().includes(query));
+      const filtered = cachedMeetings.filter(m => !query || matches(m, ["title", "participants", "meeting_start", "created_at", "content"]));
 
       if (filtered.length === 0) {
-        meetingsList.innerHTML = `<p style="font-size: 0.8rem; color: var(--text-sub); text-align: center; padding: 1rem;">${cachedMeetings.length === 0 ? "Noch keine Aufnahmen vorhanden." : "Keine Treffer für deine Suche."}</p>`;
+        meetingsList.replaceChildren(el("p", "meetings-empty", cachedMeetings.length === 0 ? "Noch keine Aufnahmen vorhanden." : "Keine Treffer für deine Suche."));
         return;
       }
 
-      filtered.forEach(m => {
-        const item = document.createElement("div");
-        item.className = "meeting-item" + (m.id === activeMeetingId ? " active" : "");
-        const d = new Date(m.created_at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
-        const safeTitle = (m.title || m.id).replace(/'/g, "\\'");
-        const t = (m.title || "").toLowerCase();
-        const p = (m.participants || "").toLowerCase();
-        const c = (m.content || "").toLowerCase();
-        const isContentMatch = query && !t.includes(query) && !p.includes(query) && c.includes(query);
-
-        item.innerHTML = `
-          <div style="padding-right: 28px;">
-            <div class="meeting-item-title">${highlightHtmlString(m.title || m.id, query)}</div>
-            <div class="meeting-item-date">${d}${m.participants ? ' • ' + m.participants : ''}</div>
-            ${isContentMatch ? '<div style="font-size: 0.72rem; color: #818cf8; margin-top: 4px; display: flex; align-items: center; gap: 4px;"><span>💬</span> Treffer im Transkript / Protokoll</div>' : ''}
-          </div>
-          <button class="delete-item-btn" title="Dieses Meeting löschen" onclick="event.stopPropagation(); deleteMeetingPrompt('${m.id}', '${safeTitle}')">
-            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-          </button>
-        `;
-        item.onclick = () => loadMeeting(m.id);
-        meetingsList.appendChild(item);
-      });
+      meetingsList.replaceChildren(...filtered.map(m => {
+        const item = el("div", "meeting-item" + (m.id === activeMeetingId ? " active" : ""));
+        const body = el("div", "meeting-item-body");
+        const title = el("div", "meeting-item-title", m.title || m.id);
+        highlightTextInElement(title, query);
+        const date = meetingDate(m, { dateStyle: "short", timeStyle: "short" });
+        body.append(title, el("div", "meeting-item-date", date + (m.participants ? " • " + m.participants : "")));
+        if (query && !matches(m, ["title", "participants"]) && matches(m, ["content"])) {
+          body.append(el("div", "meeting-item-hint", "💬 Treffer im Transkript / Protokoll"));
+        }
+        const deleteBtn = el("button", "delete-item-btn");
+        deleteBtn.title = "Dieses Meeting löschen";
+        deleteBtn.innerHTML = TRASH_ICON;
+        deleteBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteMeetingPrompt(m.id, m.title || m.id);
+        });
+        item.append(body, deleteBtn);
+        item.addEventListener("click", () => loadMeeting(m.id));
+        return item;
+      }));
     }
 
     // Status polling loop
@@ -1265,11 +1371,28 @@
         const res = await fetch("/api/status");
         if (res.ok) {
           const data = await res.json();
+          const previousStatus = currentStatus;
           currentStatus = data.status;
 
-          // Devices
-          micName.innerText = data.mic_device;
-          loopbackName.innerText = data.loopback_device;
+          if (isBusy()) {
+            lockDeviceSelects(data.mic_device, data.loopback_device);
+          } else if (micSelect.disabled) {
+            micSelect.disabled = loopbackSelect.disabled = false;
+            loadDevices();
+          }
+          if (previousStatus !== currentStatus && !isBusy()) {
+            fetchMeetings(); // Aufnahme/Analyse beendet: Listen aktualisieren
+          }
+          unprocessedSection.hidden = isBusy() || unprocessedList.childElementCount === 0;
+          errorBanner.hidden = data.status !== "error";
+          if (data.status === "error") {
+            errorBanner.textContent = `⚠️ ${data.last_error || "Unbekannter Fehler"}`;
+          }
+          if (!aiActDefaultApplied) {
+            aiActDefaultApplied = true;
+            aiActModeToggle.checked = data.status === "recording" ? data.ai_act_mode : data.default_ai_act_mode;
+            updateAiActToggleUI();
+          }
 
           // VU meters
           micVuFill.style.width = Math.min(100, Math.round(data.mic_level * 100 * 1.5)) + "%";
@@ -1322,8 +1445,9 @@
             meetingParticipantsInput.disabled = true;
             meetingTypeSelect.disabled = true;
           } else {
-            statusBadge.className = data.has_api_key ? "status-badge" : "status-badge warning";
-            statusText.innerText = data.has_api_key ? "Bereit" : "API-Key fehlt";
+            const hasError = data.status === "error";
+            statusBadge.className = hasError || !data.has_api_key ? "status-badge warning" : "status-badge";
+            statusText.innerText = hasError ? "Fehler" : data.has_api_key ? "Bereit" : "API-Key fehlt";
             recordToggleBtn.disabled = false;
             recordToggleBtn.className = "record-btn start";
             recordBtnText.innerText = "Aufnahme starten";
@@ -1337,9 +1461,9 @@
               timerDisplay.innerText = "00:00:00";
             }
 
-            // Falls gerade ein Meeting fertig analysiert wurde
-            if (data.last_meeting_id && data.last_meeting_id !== activeMeetingId) {
-              fetchMeetings();
+            // Frisch analysiertes Meeting einmal öffnen (danach bleibt die Auswahl beim Nutzer)
+            if (data.last_meeting_id && data.last_meeting_id !== lastAutoLoadedMeetingId) {
+              lastAutoLoadedMeetingId = data.last_meeting_id;
               loadMeeting(data.last_meeting_id);
             }
           }
@@ -1365,5 +1489,12 @@
     });
 
     // Initialize
-    setInterval(pollStatus, 300);
+    async function pollLoop() {
+      await pollStatus();
+      setTimeout(pollLoop, 300);
+    }
+    window.addEventListener("focus", loadDevices); // z. B. Headset angesteckt, während das Fenster im Hintergrund war
+    pollLoop();
+    loadDevices();
     fetchMeetings();
+    applyUrlParams();

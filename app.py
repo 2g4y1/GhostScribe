@@ -7,20 +7,19 @@ import glob
 import json
 import logging
 import os
-import time
 from datetime import datetime
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from analyzer import DEFAULT_MODEL, MeetingAnalyzer
+from analyzer import DEFAULT_MODEL, MeetingAnalyzer, recording_start
 from recorder import MeetingRecorder
-from utils import APP_URL, format_duration, update_env_file
+from utils import APP_URL, PORT, format_duration, update_env_file
 
-load_dotenv()
+load_dotenv(".env")  # dieselbe Datei, die update_env_file() beschreibt
 
 
 # Filtert hochfrequente Polling-Aufrufe von /api/status aus dem Terminal,
@@ -34,13 +33,34 @@ logging.getLogger("uvicorn.access").addFilter(StatusEndpointFilter())
 
 app = FastAPI(title="GhostScribe - Bot-Free AI Meeting Recorder")
 
+# Only the local UI may talk to the server: requests from foreign websites (CSRF)
+# and via foreign host names (DNS rebinding) are rejected.
+ALLOWED_HOSTS = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
+
+
+@app.middleware("http")
+async def allow_only_local_ui(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if request.headers.get("host") not in ALLOWED_HOSTS or (
+        origin and origin.removeprefix("http://") not in ALLOWED_HOSTS
+    ):
+        return JSONResponse(status_code=403, content={"detail": "Zugriff nur über die lokale GhostScribe-Oberfläche."})
+    return await call_next(request)
+
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 RECORDINGS_DIR = "recordings"
 MEETINGS_DIR = "meetings"
 ATTACHMENTS_DIR = os.path.join(RECORDINGS_DIR, "attachments")
+AUDIO_EXTENSIONS = (".mp3", ".wav")
 
-recorder = MeetingRecorder()
+
+def _default_ai_act_mode() -> bool:
+    return os.getenv("AI_ACT_MODE", "true").strip().lower() != "false"
+
+
+recorder = MeetingRecorder(output_dir=RECORDINGS_DIR)
 app_state = {
     "status": "idle",  # "idle", "recording", "processing", "error"
     "process_step": "",
@@ -48,7 +68,7 @@ app_state = {
     "current_participants": "",
     "current_meeting_type": "standard",
     "current_user_name": "Ich",
-    "ai_act_mode": True,
+    "ai_act_mode": _default_ai_act_mode(),
     "last_meeting_id": None,
     "last_error": None,
 }
@@ -60,6 +80,8 @@ class StartRequest(BaseModel):
     meeting_type: str = "standard"
     user_name: str = "Ich"
     ai_act_mode: bool = True
+    mic_device: int | None = None  # None = Windows default device
+    loopback_device: int | None = None
 
 
 class AttachmentItem(BaseModel):
@@ -73,32 +95,15 @@ class StopRequest(BaseModel):
     ai_act_mode: bool = True
 
 
+class AnalyzeRequest(BaseModel):
+    ai_act_mode: bool = True
+    user_name: str = ""
+
+
 class SettingsRequest(BaseModel):
     api_key: str = ""
     model: str = DEFAULT_MODEL
     default_ai_act_mode: bool | None = None
-
-
-# Caching device discovery to avoid PortAudio C-runtime race conditions on 300ms polling
-cached_devices = {"mic_name": "Erkenne...", "loopback_name": "Erkenne...", "last_check": 0}
-
-
-def update_cached_devices(force=False):
-    now = time.time()
-    if not force and (now - cached_devices["last_check"]) < 60:
-        return cached_devices["mic_name"], cached_devices["loopback_name"]
-    try:
-        mic_info, loopback_info = recorder.find_devices()
-        cached_devices["mic_name"] = mic_info["name"]
-        cached_devices["loopback_name"] = loopback_info["name"]
-        cached_devices["last_check"] = now
-    except Exception:
-        pass
-    return cached_devices["mic_name"], cached_devices["loopback_name"]
-
-
-# Initial discovery on startup
-update_cached_devices(force=True)
 
 
 def _safe_filename(name: str) -> str:
@@ -118,6 +123,56 @@ def _meeting_paths(meeting_id: str) -> tuple[str, str]:
     return base + ".json", base + ".md"
 
 
+def _context_path(audio_base: str) -> str:
+    """Analysis input of a recording, kept until its protocol exists so a failed analysis can be retried."""
+    return os.path.join(RECORDINGS_DIR, f"{audio_base}.context.json")
+
+
+def _load_context(audio_base: str) -> dict:
+    try:
+        with open(_context_path(audio_base), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _recording_files(audio_base: str) -> list[str]:
+    """All files of one recording: MP3, WAV original, saved analysis context and its screenshots."""
+    files = [os.path.join(RECORDINGS_DIR, audio_base + ext) for ext in AUDIO_EXTENSIONS]
+    files += [
+        os.path.join(ATTACHMENTS_DIR, os.path.basename(p)) for p in _load_context(audio_base).get("image_paths", [])
+    ]
+    files.append(_context_path(audio_base))
+    return files
+
+
+def _delete_files(paths) -> list[str]:
+    deleted = []
+    for path in paths:
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+                deleted.append(path)
+            except OSError:
+                pass
+    return deleted
+
+
+def _processed_audio_bases() -> set[str]:
+    """Base names of all recordings that already have a protocol."""
+    bases = set()
+    for json_path in glob.glob(os.path.join(MEETINGS_DIR, "*.json")):
+        bases.add(os.path.splitext(os.path.basename(json_path))[0])
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                audio_file = json.load(f).get("audio_file")
+        except (OSError, ValueError):
+            continue
+        if audio_file:
+            bases.add(os.path.splitext(os.path.basename(audio_file))[0])
+    return bases
+
+
 @app.get("/")
 def get_index():
     return FileResponse("static/index.html")
@@ -132,22 +187,19 @@ def get_favicon():
 
 @app.get("/api/status")
 def get_status():
-    mic_name = cached_devices["mic_name"]
-    loopback_name = cached_devices["loopback_name"]
-
-    has_api_key = len(os.getenv("GEMINI_API_KEY", "").strip()) > 5
-
+    devices_in_use = app_state["status"] in ("recording", "processing")
     return {
         "status": app_state["status"],
         "process_step": app_state["process_step"],
         "duration": recorder.get_duration(),
         "mic_level": recorder.mic_level if recorder.is_recording else 0.0,
         "loopback_level": recorder.loopback_level if recorder.is_recording else 0.0,
-        "mic_device": mic_name,
-        "loopback_device": loopback_name,
-        "has_api_key": has_api_key,
+        "mic_device": recorder.mic_info.get("name") if devices_in_use else None,
+        "loopback_device": recorder.loopback_info.get("name") if devices_in_use else None,
+        "has_api_key": len(os.getenv("GEMINI_API_KEY", "").strip()) > 5,
         "model": os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
-        "ai_act_mode": app_state.get("ai_act_mode", True),
+        "ai_act_mode": app_state["ai_act_mode"],
+        "default_ai_act_mode": _default_ai_act_mode(),
         "last_meeting_id": app_state["last_meeting_id"],
         "last_error": app_state["last_error"],
         "current_title": app_state["current_title"],
@@ -155,6 +207,17 @@ def get_status():
         "current_meeting_type": app_state["current_meeting_type"],
         "current_user_name": app_state["current_user_name"],
     }
+
+
+@app.get("/api/devices")
+def list_devices():
+    """Selectable microphones and loopback devices (not available while recording)."""
+    if recorder.is_recording:
+        raise HTTPException(status_code=409, detail="Während einer Aufnahme nicht verfügbar.")
+    try:
+        return MeetingRecorder.list_devices()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audiogeräte konnten nicht ermittelt werden: {e}") from e
 
 
 @app.post("/api/record/start")
@@ -169,7 +232,7 @@ def start_recording(req: StartRequest):
         app_state["current_user_name"] = req.user_name.strip() or "Ich"
         app_state["ai_act_mode"] = req.ai_act_mode
         app_state["last_error"] = None
-        recorder.start()
+        recorder.start(mic_index=req.mic_device, loopback_index=req.loopback_device)
         app_state["status"] = "recording"
 
         print("\n" + "=" * 68)
@@ -178,6 +241,8 @@ def start_recording(req: StartRequest):
         print(f"   Eigener Name: {app_state['current_user_name']} (Kanal 0 / Mikrofon)")
         if app_state["current_participants"]:
             print(f"   Teilnehmer:   {app_state['current_participants']} (Kanal 1 / Teams)")
+        print(f"   Mikrofon:     {recorder.mic_info['name']}")
+        print(f"   Systemton:    {recorder.loopback_info['name']}")
         print(f"   Startzeit:    {datetime.now().strftime('%H:%M:%S')}")
         print("   ℹ️  HINWEIS:    Die Aufnahme läuft stabil als Dienst im Hintergrund,")
         print("                 selbst wenn alle Browserfenster geschlossen werden!")
@@ -246,25 +311,8 @@ def save_attachments(images: list[AttachmentItem]) -> list[str]:
     return saved_paths
 
 
-def _analysis_context(req: StopRequest | None) -> tuple[bool, str, list[str]]:
-    """Returns (ai_act_mode, chat_text, saved screenshot paths) from an optional stop/analyze request."""
-    if req is None:
-        return app_state["ai_act_mode"], "", []
-    saved_images = save_attachments(req.images) if req.images else []
-    return req.ai_act_mode, req.chat_text.strip(), saved_images
-
-
-def run_gemini_analysis(
-    audio_path,
-    title,
-    participants="",
-    meeting_type="standard",
-    user_name="Ich",
-    chat_text="",
-    image_paths=None,
-    duration=None,
-    ai_act_mode=True,
-):
+def run_gemini_analysis(audio_path: str, context: dict):
+    """Runs the Gemini analysis. On failure the context file stays, so the recording can be analyzed again."""
     try:
         app_state["status"] = "processing"
         app_state["process_step"] = "Starte Analyse..."
@@ -278,22 +326,22 @@ def run_gemini_analysis(
         def update_step(msg):
             app_state["process_step"] = msg
 
-        analyzer = MeetingAnalyzer(api_key=api_key)
-        analyzer.analyze_meeting(
+        MeetingAnalyzer(api_key=api_key).analyze_meeting(
             audio_filepath=audio_path,
-            meeting_title=title,
-            participants=participants,
-            meeting_type=meeting_type,
-            user_name=user_name,
-            chat_text=chat_text,
-            image_filepaths=image_paths,
-            duration=duration,
+            meeting_title=context.get("title", ""),
+            participants=context.get("participants", ""),
+            meeting_type=context.get("meeting_type", "standard"),
+            user_name=context.get("user_name", "Ich"),
+            chat_text=context.get("chat_text", ""),
+            image_filepaths=context.get("image_paths", []),
+            duration=context.get("duration"),
             on_status_update=update_step,
-            ai_act_mode=ai_act_mode,
+            ai_act_mode=context.get("ai_act_mode", True),
         )
 
-        base_id = os.path.splitext(os.path.basename(audio_path))[0]
-        app_state["last_meeting_id"] = base_id
+        audio_base = os.path.splitext(os.path.basename(audio_path))[0]
+        _delete_files([_context_path(audio_base)])
+        app_state["last_meeting_id"] = audio_base
         app_state["status"] = "idle"
         app_state["process_step"] = "Analyse erfolgreich abgeschlossen!"
     except Exception as e:
@@ -302,93 +350,112 @@ def run_gemini_analysis(
         app_state["process_step"] = f"Fehler: {e}"
 
 
+def _save_and_analyze(context: dict):
+    """Background task after stopping: writes the audio files, keeps the context for retries, analyzes."""
+    try:
+        audio_path = recorder.save(compress=True)
+    except Exception as e:
+        app_state["status"] = "error"
+        app_state["last_error"] = f"Audiodatei konnte nicht gespeichert werden: {e}"
+        return
+
+    audio_base = os.path.splitext(os.path.basename(audio_path))[0]
+    with open(_context_path(audio_base), "w", encoding="utf-8") as f:
+        json.dump(context, f, indent=2, ensure_ascii=False)
+    print(f"   Audiodatei gespeichert: {audio_path}")
+    run_gemini_analysis(audio_path, context)
+
+
 @app.post("/api/record/stop")
 def stop_recording(background_tasks: BackgroundTasks, req: StopRequest | None = None):
     if app_state["status"] != "recording":
         raise HTTPException(status_code=400, detail="Keine aktive Aufnahme.")
 
-    # Mit MP3-Kompression für 10x schnellere Uploads
-    audio_path = recorder.stop(compress=True)
-    if not audio_path or not os.path.exists(audio_path):
-        app_state["status"] = "idle"
-        raise HTTPException(status_code=500, detail="Fehler beim Speichern der Audiodatei.")
-
-    ai_act_mode, chat_text, saved_images = _analysis_context(req)
-    dur_str = format_duration(recorder.end_time - recorder.start_time)
-
-    background_tasks.add_task(
-        run_gemini_analysis,
-        audio_path=audio_path,
-        title=app_state["current_title"],
-        participants=app_state["current_participants"],
-        meeting_type=app_state["current_meeting_type"],
-        user_name=app_state["current_user_name"],
-        chat_text=chat_text,
-        image_paths=saved_images,
-        duration=dur_str,
-        ai_act_mode=ai_act_mode,
-    )
+    recorder.stop_capture()
+    req = req or StopRequest(ai_act_mode=app_state["ai_act_mode"])
+    context = {
+        "title": app_state["current_title"],
+        "participants": app_state["current_participants"],
+        "meeting_type": app_state["current_meeting_type"],
+        "user_name": app_state["current_user_name"],
+        "chat_text": req.chat_text.strip(),
+        "image_paths": save_attachments(req.images),
+        "ai_act_mode": req.ai_act_mode,
+        "duration": format_duration(recorder.end_time - recorder.start_time),
+    }
     app_state["status"] = "processing"
-    mode_text = "EU AI Act Modus" if ai_act_mode else "Stimmungsanalyse-Modus"
-    app_state["process_step"] = f"Audio synchronisiert ({mode_text}). Übergebe an Gemini..."
+    app_state["process_step"] = "Audio wird synchronisiert und gespeichert..."
+    background_tasks.add_task(_save_and_analyze, context)
 
+    mode_text = "EU AI Act Modus" if req.ai_act_mode else "Stimmungsanalyse-Modus"
     print("\n" + "=" * 68)
-    print(f"⏹️ [AUFNAHME BEENDET] Gesamtlaufzeit: {dur_str} ({mode_text})")
-    print(f"   Audiodatei:   {audio_path}")
-    if chat_text:
-        print(f"   Chatverlauf:  {len(chat_text)} Zeichen übergeben")
-    if saved_images:
-        print(f"   Screenshots:  {len(saved_images)} Bild(er) beigefügt")
-    print("   🤖 Starte Gemini KI-Analyse im Hintergrund...")
+    print(f"⏹️ [AUFNAHME BEENDET] Gesamtlaufzeit: {context['duration']} ({mode_text})")
+    if context["chat_text"]:
+        print(f"   Chatverlauf:  {len(context['chat_text'])} Zeichen übergeben")
+    if context["image_paths"]:
+        print(f"   Screenshots:  {len(context['image_paths'])} Bild(er) beigefügt")
+    print("   🤖 Speichere Audio und starte Gemini KI-Analyse im Hintergrund...")
     print("=" * 68 + "\n")
 
-    return {"success": True, "audio_file": audio_path}
+    return {"success": True}
 
 
 @app.get("/api/unprocessed-recordings")
 def list_unprocessed_recordings():
-    """Findet Aufnahmen in recordings/, zu denen kein Protokoll existiert."""
-    unprocessed = []
-    for ext in ["*.mp3", "*.wav"]:
-        for f in glob.glob(os.path.join(RECORDINGS_DIR, ext)):
-            base = os.path.splitext(os.path.basename(f))[0]
-            if os.path.exists(os.path.join(MEETINGS_DIR, f"{base}.json")):
-                continue
-            # Ignoriere winzige Klick-Tests (< 10 KB)
-            if os.path.getsize(f) < 10000:
-                continue
-            unprocessed.append(
-                {
-                    "filename": os.path.basename(f),
-                    "filepath": f,
-                    "size_kb": round(os.path.getsize(f) / 1024, 1),
-                    "time": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%d.%m.%Y %H:%M:%S"),
-                }
-            )
-    return unprocessed
+    """Recordings without a protocol (e.g. after a failed analysis), one entry each with MP3 preferred."""
+    processed = _processed_audio_bases()
+    recordings = {}
+    for ext in (".wav", ".mp3"):  # MP3 is inserted last and therefore replaces the WAV entry
+        for path in glob.glob(os.path.join(RECORDINGS_DIR, "*" + ext)):
+            base = os.path.splitext(os.path.basename(path))[0]
+            if base not in processed and os.path.getsize(path) >= 10000:  # Ignoriere winzige Klick-Tests
+                recordings[base] = path
+    return [
+        {
+            "filename": os.path.basename(path),
+            "title": _load_context(base).get("title", ""),
+            "time": recording_start(path).strftime("%d.%m.%Y %H:%M"),
+            "size_kb": round(os.path.getsize(path) / 1024),
+        }
+        for base, path in sorted(recordings.items(), reverse=True)
+    ]
 
 
 @app.post("/api/recordings/{filename}/analyze")
-def analyze_existing_recording(filename: str, background_tasks: BackgroundTasks, req: StopRequest | None = None):
+def analyze_existing_recording(filename: str, background_tasks: BackgroundTasks, req: AnalyzeRequest | None = None):
     audio_path = _recording_path(filename)
     if not os.path.isfile(audio_path):
         raise HTTPException(status_code=404, detail="Audiodatei nicht gefunden.")
     if app_state["status"] in ["recording", "processing"]:
         raise HTTPException(status_code=400, detail="Aktuell läuft bereits eine Aufnahme oder Analyse.")
 
-    ai_act_mode, chat_text, saved_images = _analysis_context(req)
-    background_tasks.add_task(
-        run_gemini_analysis,
-        audio_path=audio_path,
-        title=f"Besprechung ({filename})",
-        user_name=app_state["current_user_name"],
-        chat_text=chat_text,
-        image_paths=saved_images,
-        ai_act_mode=ai_act_mode,
-    )
+    req = req or AnalyzeRequest(ai_act_mode=_default_ai_act_mode())
+    context = {"ai_act_mode": req.ai_act_mode, "user_name": req.user_name.strip() or "Ich"}
+    # Die gespeicherten Angaben der ursprünglichen Aufnahme (Titel, Chat, Screenshots, Modus) haben Vorrang
+    context.update(_load_context(os.path.splitext(filename)[0]))
+
     app_state["status"] = "processing"
     app_state["process_step"] = f"Starte Analyse für {filename}..."
+    app_state["last_error"] = None
+    background_tasks.add_task(run_gemini_analysis, audio_path, context)
     return {"success": True, "message": "Analyse gestartet."}
+
+
+@app.delete("/api/recordings/{filename}")
+def delete_recording(filename: str):
+    """Deletes a recording without protocol: MP3, WAV original, saved context and screenshots."""
+    audio_base = os.path.splitext(_safe_filename(filename))[0]
+    if app_state["status"] in ["recording", "processing"]:
+        raise HTTPException(status_code=400, detail="Während einer Aufnahme oder Analyse nicht möglich.")
+    if audio_base in _processed_audio_bases():
+        raise HTTPException(
+            status_code=409, detail="Zu dieser Aufnahme gibt es ein Protokoll. Bitte das Meeting löschen."
+        )
+
+    deleted_files = _delete_files(_recording_files(audio_base))
+    if not deleted_files:
+        raise HTTPException(status_code=404, detail="Aufnahme nicht gefunden.")
+    return {"success": True, "deleted_files": deleted_files}
 
 
 @app.get("/api/meetings")
@@ -451,19 +518,11 @@ def delete_meeting(meeting_id: str):
             pass
 
     audio_base = os.path.splitext(os.path.basename(metadata.get("audio_file") or meeting_id))[0]
-    candidates = [os.path.join(RECORDINGS_DIR, audio_base + ext) for ext in (".mp3", ".wav")]
+    candidates = _recording_files(audio_base)
     candidates += [os.path.join(ATTACHMENTS_DIR, os.path.basename(p)) for p in metadata.get("attachments") or []]
     candidates += [md_path, json_path]
 
-    deleted_files = []
-    for path in candidates:
-        if os.path.isfile(path):
-            try:
-                os.remove(path)
-                deleted_files.append(path)
-            except OSError:
-                pass
-
+    deleted_files = _delete_files(candidates)
     if not deleted_files:
         raise HTTPException(status_code=404, detail="Meeting nicht gefunden.")
 
@@ -489,13 +548,12 @@ def update_settings(req: SettingsRequest):
     new_key = req.api_key.strip()
     if new_key and "•" not in new_key and "*" not in new_key:
         updates["GEMINI_API_KEY"] = new_key
+    if req.default_ai_act_mode is not None:
+        updates["AI_ACT_MODE"] = "true" if req.default_ai_act_mode else "false"
 
     try:
         update_env_file(updates)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-
-    if req.default_ai_act_mode is not None:
-        app_state["ai_act_mode"] = req.default_ai_act_mode
 
     return {"success": True, "message": "Einstellungen gespeichert."}

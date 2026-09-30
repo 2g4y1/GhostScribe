@@ -13,15 +13,49 @@ import wave
 from datetime import datetime
 
 import numpy as np
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
 from utils import format_duration
 
-load_dotenv()
-
 DEFAULT_MODEL = "gemini-flash-latest"
+
+# Zusätzliche Anweisungen je Besprechungstyp
+MEETING_TYPE_FOCUS = {
+    "standard": "Fokus: Ergebnisse, Beschlüsse und Aufgaben. Kein Zusatzabschnitt.",
+    "sprint": (
+        "Fokus: Status je Ticket bzw. Arbeitspaket, Blocker, Abhängigkeiten, technische Architektur- und "
+        "Designentscheidungen. Ticket-IDs, Komponentennamen und Versionsnummern exakt übernehmen.\n"
+        "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
+        "## 🛠️ Sprint-Status\n"
+        "| Ticket / Thema | Zuständig | Status | Blocker / Abhängigkeit |\n"
+        "Danach **Technische Entscheidungen**: je Entscheidung mit Begründung und verworfenen Alternativen, falls genannt."
+    ),
+    "sales": (
+        "Fokus: Bedarf und Ausgangslage des Gegenübers, genannte Probleme, Budget, Entscheidungsweg, Einwände "
+        "und Antworten darauf, Zusagen beider Seiten, nächster Termin. Beträge und Fristen exakt übernehmen.\n"
+        "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
+        "## 💼 Deal-Status\n"
+        "Bedarf, Probleme, Budget, Entscheider, Zeitplan, Einwände, unsere Zusagen, Zusagen des Gegenübers, "
+        "nächster Termin; jeweils „nicht genannt“, wenn nicht besprochen."
+    ),
+    "interview": (
+        "Fokus: Fachkompetenz des Kandidaten je Thema, Stärken, Schwächen, Gehaltsvorstellung, Verfügbarkeit, "
+        "Gesamteindruck. Trenne Fakten (was der Kandidat gesagt hat) klar von Einschätzungen, und belege jede "
+        "Einschätzung mit Zitat und Zeitstempel.\n"
+        "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
+        "## 👤 Kandidatenprofil\n"
+        "| Thema | Aussage des Kandidaten | Einschätzung | Beleg [Zeit] |\n"
+        "Danach: Gehaltsvorstellung, frühester Eintritt, Fragen des Kandidaten, Gesamteindruck (2–3 Sätze, begründet)."
+    ),
+    "brainstorming": (
+        "Fokus: Vollständige Sammlung aller Ideen, auch verworfener und unkonventioneller, mit den genannten "
+        "Pro- und Contra-Argumenten und der Priorisierung, falls eine stattgefunden hat.\n"
+        "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
+        "## 💡 Ideen-Übersicht\n"
+        "| # | Idee | eingebracht von | Pro | Contra | Resonanz | Status (priorisiert/weiterverfolgen/verworfen/offen) |"
+    ),
+}
 
 
 def extract_title_from_markdown(markdown_text: str, fallback: str = "") -> str:
@@ -60,10 +94,10 @@ _SYSTEM_PROMPT_TEMPLATE = """
 Die Aufnahme basiert auf zwei Hardware-Quellen:
 - Lokales Mikrofon (Kanal 0): Der Host / Nutzer vor dem PC.
 - Rechner-Ton (Kanal 1 / Systemton / Loopback): Die übrigen Remote-Teilnehmer (z. B. Kollegen in Teams/Zoom).
-1. Nutzer: Seine Stimme kommt direkt vom lokalen Mikrofon (oft lauter, klarer, ohne Streaming-Kompression). Bezeichne ihn immer mit dem übergebenen Namen bzw. seinem Vornamen.
+1. Nutzer: Seine Stimme kommt direkt vom lokalen Mikrofon (oft lauter, klarer, ohne Streaming-Kompression). Bezeichne ihn mit dem übergebenen Namen bzw. seinem Vornamen. Ist das Mikrofon laut Kanal-Analyse stumm, hat er nicht gesprochen: Ordne ihm dann keine Äußerungen zu.
 2. WICHTIG – Wer spricht vs. Wer wird angesprochen:
    - Direkte Ansprachen wie „Danke, <Name>“, „Bis morgen, <Name>“ oder „<Name>, was meinst du?“ bezeichnen IMMER den ZUHÖRER/EMPFÄNGER, niemals den Sprecher dieser Aussage!
-   - Wenn der Kollege im Call den lokalen Nutzer mit seinem Vornamen oder Spitznamen verabschiedet oder anspricht (z. B. „Bis morgen, Mani“), gehört dieser Name dem lokalen Nutzer – gib diesen Namen keinesfalls fälschlicherweise dem sprechenden Kollegen!
+   - Wenn der Kollege im Call den lokalen Nutzer mit seinem Vornamen oder Spitznamen verabschiedet oder anspricht (z. B. „Bis morgen, <Vorname>“), gehört dieser Name dem lokalen Nutzer – gib diesen Namen keinesfalls fälschlicherweise dem sprechenden Kollegen!
 3. Übrige Teilnehmer: Unterscheide die Stimmen anhand von Stimmklang und Gesprächsverlauf. Vergib für jede Stimme ein festes Kürzel oder die Rollenbezeichnung (z. B. Kollege, Sprecher A) und verwende es in allen Abschnitten gleich.
 4. Namen: Ersetze ein Kürzel nur durch einen Namen, wenn es dafür einen eindeutigen Beleg gibt (z. B. Selbstvorstellung oder namentliche Vorstellung durch andere). Ein Kürzel (z. B. „Kollege“) ist immer besser als ein vertauschter oder falscher Name.
 5. Sammelbegriffe wie „die anderen“ verwendest du nicht. Ist eine Stimme wirklich nicht zuzuordnen, schreibe „Sprecher ?“.
@@ -92,7 +126,7 @@ Halte diese Reihenfolge ein. Platzhalter stehen in <spitzen Klammern>. Abschnitt
 - **Dauer:** <aus dem Kontext>
 - **Modus:** {mode_label}
 - **Sprecher:**
-  - **<Name des Nutzers>** – Headset-Mikrofon
+  - **<Name des Nutzers>** – Headset-Mikrofon (nur, wenn er spricht)
   - **<Name oder Sprecher A>** – <Rolle, falls erwähnt>; Zuordnung: <Beleg mit Zeitstempel, z. B. „stellt sich vor [00:01:12]“, oder „nicht zugeordnet“>
 
 ---
@@ -190,6 +224,15 @@ def find_wav(audio_filepath: str) -> str | None:
     return wav_path if os.path.exists(wav_path) else None
 
 
+def recording_start(audio_filepath: str) -> datetime:
+    """Start time from the file name (meeting_YYYY-MM-DD_HH-MM-SS), else the file's modification time."""
+    stem = os.path.splitext(os.path.basename(audio_filepath))[0]
+    try:
+        return datetime.strptime(stem, "meeting_%Y-%m-%d_%H-%M-%S")
+    except ValueError:
+        return datetime.fromtimestamp(os.path.getmtime(audio_filepath))
+
+
 def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5) -> str:
     """
     Analyzes hardware stereo channels (Channel 0: Mic/Host, Channel 1: Loopback/Remote)
@@ -261,24 +304,16 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         total_loop = sum(e - s for lbl, s, e in merged if lbl == "LOOP")
         total_both = sum(e - s for lbl, s, e in merged if lbl == "BOTH")
         tot = max(1.0, total_mic + total_loop + total_both)
+        mic_share = total_mic / tot * 100
 
         lines = [
-            f"Hardware-Sprechzeit: Lokaler Nutzer (Mikrofon): {total_mic / tot * 100:.0f}%, Remote-Gegenüber (Systemton): {total_loop / tot * 100:.0f}%",
-            "Hardware-Aktivitätsverlauf (Physische Trennung: Mikrofon vs. Systemton):",
+            f"Sprechanteil laut Hardware: Mikrofon (Nutzer) {mic_share:.0f} %, Systemton (Remote) {total_loop / tot * 100:.0f} %"
         ]
-        max_entries = 40
-        for lbl, s, e in merged[:max_entries]:
-            who = {
-                "MIC": "Nutzer (Lokales Mikrofon)",
-                "LOOP": "Remote-Teilnehmer / Kollege (Systemton)",
-            }.get(lbl, "Beide gleichzeitig / Übersprechen")
-            ms, ss = int(s // 60), int(s % 60)
-            me, se = int(e // 60), int(e % 60)
-            lines.append(f"- [{ms:02d}:{ss:02d}–{me:02d}:{se:02d}]: {who}")
-
-        if len(merged) > max_entries:
-            lines.append(f"... (und weitere {len(merged) - max_entries} Phasen)")
-
+        if mic_share < 5:
+            lines.append("Das Mikrofon war nahezu stumm: Der Nutzer hat so gut wie nicht gesprochen.")
+        lines.append("Verlauf (M = Mikrofon/Nutzer, S = Systemton/Remote, B = beide gleichzeitig):")
+        labels = {"MIC": "M", "LOOP": "S", "BOTH": "B"}
+        lines += [f"[{format_duration(s)}–{format_duration(e)}] {labels[lbl]}" for lbl, s, e in merged]
         return "\n".join(lines)
     except Exception as e:
         print(f"[MeetingAnalyzer] Hinweis bei Hardware-Kanal-Analyse: {e}")
@@ -361,42 +396,7 @@ class MeetingAnalyzer:
                         except Exception as img_err:
                             log(f"Warnung: Bild '{img_path}' konnte nicht hochgeladen werden: {img_err}")
 
-            type_instructions = {
-                "standard": "Fokus: Ergebnisse, Beschlüsse und Aufgaben. Kein Zusatzabschnitt.",
-                "sprint": (
-                    "Fokus: Status je Ticket bzw. Arbeitspaket, Blocker, Abhängigkeiten, technische Architektur- und "
-                    "Designentscheidungen. Ticket-IDs, Komponentennamen und Versionsnummern exakt übernehmen.\n"
-                    "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
-                    "## 🛠️ Sprint-Status\n"
-                    "| Ticket / Thema | Zuständig | Status | Blocker / Abhängigkeit |\n"
-                    "Danach **Technische Entscheidungen**: je Entscheidung mit Begründung und verworfenen Alternativen, falls genannt."
-                ),
-                "sales": (
-                    "Fokus: Bedarf und Ausgangslage des Gegenübers, genannte Probleme, Budget, Entscheidungsweg, Einwände "
-                    "und Antworten darauf, Zusagen beider Seiten, nächster Termin. Beträge und Fristen exakt übernehmen.\n"
-                    "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
-                    "## 💼 Deal-Status\n"
-                    "Bedarf, Probleme, Budget, Entscheider, Zeitplan, Einwände, unsere Zusagen, Zusagen des Gegenübers, "
-                    "nächster Termin; jeweils „nicht genannt“, wenn nicht besprochen."
-                ),
-                "interview": (
-                    "Fokus: Fachkompetenz des Kandidaten je Thema, Stärken, Schwächen, Gehaltsvorstellung, Verfügbarkeit, "
-                    "Gesamteindruck. Trenne Fakten (was der Kandidat gesagt hat) klar von Einschätzungen, und belege jede "
-                    "Einschätzung mit Zitat und Zeitstempel.\n"
-                    "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
-                    "## 👤 Kandidatenprofil\n"
-                    "| Thema | Aussage des Kandidaten | Einschätzung | Beleg [Zeit] |\n"
-                    "Danach: Gehaltsvorstellung, frühester Eintritt, Fragen des Kandidaten, Gesamteindruck (2–3 Sätze, begründet)."
-                ),
-                "brainstorming": (
-                    "Fokus: Vollständige Sammlung aller Ideen, auch verworfener und unkonventioneller, mit den genannten "
-                    "Pro- und Contra-Argumenten und der Priorisierung, falls eine stattgefunden hat.\n"
-                    "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
-                    "## 💡 Ideen-Übersicht\n"
-                    "| # | Idee | eingebracht von | Pro | Contra | Resonanz | Status (priorisiert/weiterverfolgen/verworfen/offen) |"
-                ),
-            }
-            specific_focus = type_instructions.get(meeting_type, type_instructions["standard"])
+            specific_focus = MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
 
             clean_input_title = (meeting_title or "").strip()
             is_generic_title = not clean_input_title or clean_input_title.lower() in [
@@ -411,7 +411,8 @@ class MeetingAnalyzer:
                 if not is_generic_title
                 else "Nicht vorgegeben (Bitte extrahiere ein prägnantes, aussagekräftiges Hauptthema 3-7 Wörter für die oberste '# 📝 Besprechungsprotokoll: <Titel>' Zeile!)"
             )
-            meeting_date = datetime.now().strftime("%d.%m.%Y, %H:%M Uhr")
+            meeting_start = recording_start(audio_filepath)
+            meeting_date = meeting_start.strftime("%d.%m.%Y, %H:%M Uhr")
 
             channel_analysis = extract_channel_activity_summary(audio_filepath)
             channel_block = ""
@@ -419,18 +420,16 @@ class MeetingAnalyzer:
                 channel_block = f"""
 <hardware_kanal_analyse>
 WICHTIGSTE PHYSIKALISCHE BODENWAHRHEIT ZUR SPRECHERZUORDNUNG:
-Die Aufnahme wurde mit zwei getrennten Audio-Kanälen aufgezeichnet:
-- Kanal 0 (Lokales Mikrofon): Die Stimme des Nutzers ('{user_label}') vor diesem Rechner.
-- Kanal 1 (Systemton / Loopback): Das Gegenüber in Teams/Zoom (Kollege / Remote-Teilnehmer).
+Die Aufnahme hat zwei getrennte Kanäle: Kanal 0 = lokales Mikrofon des Nutzers ('{user_label}'),
+Kanal 1 = Systemton mit den Remote-Teilnehmern (Teams/Zoom).
 
 {channel_analysis}
 
 VERBINDLICHE REGELN FÜR DIESE AUFNAHME:
-1. Aussagen während der Mikrofon-Phasen stammen VOM LOKALEN NUTZER ('{user_label}')!
-2. Aussagen während der Systemton-Phasen stammen VOM REMOTE-KOLLEGEN!
-3. Wenn der Remote-Kollege im Systemton einen Namen ausspricht (z. B. „Bis morgen, Mani“ oder „Danke Manuel“):
-   Der Kollege spricht hier den Nutzer ('{user_label}') an! Dieser Name gehört dem Nutzer, NIEMALS dem Remote-Kollegen!
-4. Ordne dem Remote-Kollegen NIEMALS den Namen des Nutzers zu. Falls der Kollege keinen bekannten Namen nennt, bezeichne ihn als 'Kollege' oder 'Sprecher A'.
+1. Äußerungen in M-Phasen stammen vom Nutzer ('{user_label}'), Äußerungen in S-Phasen von Remote-Teilnehmern.
+2. Ordne dem Nutzer keine Äußerung aus einer S-Phase zu – auch nicht, wenn dort sein Name fällt:
+   Wer „Danke, …“ oder „Bis morgen, …“ sagt, spricht den Nutzer an.
+3. Ordne einem Remote-Teilnehmer niemals den Namen des Nutzers zu. Ohne bekannten Namen heißt er „Kollege“ oder „Sprecher A“.
 </hardware_kanal_analyse>
 """
 
@@ -491,7 +490,6 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
                         config=types.GenerateContentConfig(
                             system_instruction=instruction_to_use,
                             temperature=0.2,
-                            max_output_tokens=8192,
                         ),
                     )
                     self.model = current_model
@@ -516,6 +514,10 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
             if not markdown_content:
                 markdown_content = "*(Keine Zusammenfassung generiert. Die Audiodatei war möglicherweise zu kurz, enthielt keine Sprache oder wurde gefiltert.)*"
 
+            if response.candidates and response.candidates[0].finish_reason == types.FinishReason.MAX_TOKENS:
+                log("Warnung: Ausgabelimit des Modells erreicht – das Protokoll ist unvollständig.")
+                markdown_content += "\n\n> ⚠️ **Hinweis:** Das Protokoll wurde am Ausgabelimit des Modells abgeschnitten und ist unvollständig."
+
             log("Analyse erfolgreich abgeschlossen!")
 
             # Speichern als Markdown & JSON
@@ -539,6 +541,7 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
                 "participants": participants or "",
                 "meeting_type": meeting_type or "standard",
                 "ai_act_mode": bool(ai_act_mode),
+                "meeting_start": meeting_start.isoformat(timespec="seconds"),
                 "created_at": datetime.now().isoformat(),
                 "audio_file": audio_filepath,
                 "model_used": self.model,
