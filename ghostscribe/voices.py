@@ -423,6 +423,6 @@ def delete_profile(profile_id: str) -> bool:
 def rename_speaker(markdown: str, old: str, new: str) -> str:
     """Replaces a voice label in the minutes: generated labels everywhere, real names only as bold speaker labels."""
     if _UNKNOWN.match(old):
-        markdown = re.sub(rf" \({re.escape(old)}\)", "", markdown)  # "Roland (Stimme 1)": a name from the conversation
+        markdown = re.sub(rf" \({re.escape(old)}\)", "", markdown)  # "Tom (Stimme 1)": a name from the conversation
         return re.sub(rf"{re.escape(old)}(?!\d)", lambda _: new, markdown)
     return re.sub(rf"\*\*{re.escape(old)}(:?)\*\*", lambda m: f"**{new}{m.group(1)}**", markdown)

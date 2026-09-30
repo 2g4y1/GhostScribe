@@ -911,7 +911,7 @@
     }
 
     // Speaker names in the minutes get the colors of the participant chips. Further speakers of the transcript
-    // follow in the order they first speak; "Bernd" matches the participant "Bernd Müller" if the first name is unique.
+    // follow in the order they first speak; "Tom" matches the participant "Tom Weber" if the first name is unique.
     function colorSpeakers(meta) {
       const selfKey = speakerKey(meta.user_name || "");
       const keys = splitNames(meta.participants).map(speakerKey);
