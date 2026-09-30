@@ -14,12 +14,13 @@
 
 ![Recording in progress](docs/screenshots/recording.png)
 
-GhostScribe records your microphone and your computer's audio output as two separate channels, so no meeting bot has to join the call. When you stop the recording, Gemini turns it into structured minutes with summary, decisions and action items. The interface is available in English and German; the minutes are currently written in German.
+GhostScribe records your microphone and your computer's audio output as two separate channels, so no meeting bot has to join the call. When you stop the recording, Gemini turns it into structured minutes with summary, decisions and action items. The interface is available in English and German; the minutes are written in German.
 
 ## Features
 
 - **Two-channel recording:** microphone and system audio (WASAPI loopback) are stored on separate channels; a channel timeline tells Gemini when you and when the others were speaking.
-- **Structured minutes:** management summary, decisions, prioritized action items, open questions and a cleaned-up transcript (condensed to key quotes for meetings over 45 minutes), with focus templates for sprints, sales calls, interviews and brainstorming.
+- **Structured minutes:** management summary, decisions, prioritized action items, open questions and a cleaned-up transcript, with focus templates for sprints, sales calls, interviews and brainstorming.
+- **Any spoken language:** the minutes are written in German and the transcript keeps the spoken language. For languages other than German and English, the viewer switches the transcript between the original and a German translation. Meetings over 45 minutes get a condensed course with key quotes instead of a full transcript.
 - **Meeting context:** add chat history, notes and screenshots of shared slides (paste with Ctrl+V).
 - **EU AI Act mode (default):** no emotion or sentiment analysis. The optional sentiment mode requires explicit confirmation.
 - **Local storage:** recordings and minutes stay on your PC; files uploaded to Gemini are deleted after the analysis.

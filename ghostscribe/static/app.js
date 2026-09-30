@@ -10,6 +10,9 @@
     let lastAutoLoadedMeetingId = null; // a freshly analyzed meeting is opened automatically only once
     let aiActDefaultApplied = false;
     const DEVICE_STORAGE_KEYS = { mic: "ghostscribe_mic_device", loopback: "ghostscribe_loopback_device" };
+    const TRANSCRIPT_STORAGE_KEY = "ghostscribe_transcript_language";
+    let transcriptLanguage = localStorage.getItem(TRANSCRIPT_STORAGE_KEY) || "original";
+    let transcriptHasTranslation = false;
     const TRASH_ICON = '<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>';
 
     // Creates an element; text is always set as textContent and never parsed as HTML
@@ -822,10 +825,11 @@
     // Smart 1-Click Copy: Formatted Rich HTML (Teams, Outlook, Slack, Word) + Clean Markdown (Notepad, Code)
     copyMdBtn.addEventListener("click", async () => {
       if (!rawCurrentMarkdown) return;
+      const markdown = visibleMarkdown(); // the transcript in the language that is shown
       try {
-        const htmlContent = DOMPurify.sanitize(marked.parse(rawCurrentMarkdown));
+        const htmlContent = DOMPurify.sanitize(marked.parse(markdown));
         const blobHtml = new Blob([htmlContent], { type: "text/html" });
-        const blobText = new Blob([rawCurrentMarkdown], { type: "text/plain" });
+        const blobText = new Blob([markdown], { type: "text/plain" });
 
         if (navigator.clipboard && window.ClipboardItem) {
           await navigator.clipboard.write([
@@ -835,13 +839,13 @@
             })
           ]);
         } else {
-          await navigator.clipboard.writeText(rawCurrentMarkdown);
+          await navigator.clipboard.writeText(markdown);
         }
         flashButton(copyMdBtn);
         showToast(t("toast.copied_rich"));
       } catch (err) {
         try {
-          await navigator.clipboard.writeText(rawCurrentMarkdown);
+          await navigator.clipboard.writeText(markdown);
           flashButton(copyMdBtn);
           showToast(t("toast.copied_text"));
         } catch (e) {
@@ -874,6 +878,58 @@
       viewMeta.replaceChildren(details.join(" • ") + " ", modeBadge);
     }
 
+    // Transcripts in languages other than German and English carry a German translation below each line
+    // ("  > ..."). The viewer shows either the original or the translation; the download keeps both.
+    const TRANSCRIPT_ENTRY = /^(- \[\d{2}:\d{2}:\d{2}\] \*\*[^*]+\*\*(?: \[[^\]]*\])?:? ?)(.*)$/;
+    const TRANSLATION_LINE = /^\s*> ?(.*)$/;
+
+    function transcriptVariant(markdown, language) {
+      const lines = [];
+      let translated = false;
+      for (const line of markdown.split(/\r?\n/)) {
+        const translation = line.match(TRANSLATION_LINE);
+        const entry = translation && lines.length ? lines[lines.length - 1].match(TRANSCRIPT_ENTRY) : null;
+        if (!entry) {
+          lines.push(line);
+          translated = false;
+        } else if (language === "german") {
+          lines[lines.length - 1] = translated ? `${lines[lines.length - 1]} ${translation[1]}` : entry[1] + translation[1];
+          translated = true;
+        }
+      }
+      return lines.join("\n");
+    }
+
+    function visibleMarkdown() {
+      return transcriptHasTranslation ? transcriptVariant(rawCurrentMarkdown, transcriptLanguage) : rawCurrentMarkdown;
+    }
+
+    function renderMarkdown() {
+      markdownBody.innerHTML = DOMPurify.sanitize(marked.parse(visibleMarkdown()));
+      if (transcriptHasTranslation) addTranscriptToggle();
+    }
+
+    function addTranscriptToggle() {
+      const heading = [...markdownBody.querySelectorAll("h2")].find(h => /Transkript|Transcript/i.test(h.textContent));
+      if (!heading) return;
+      const toggle = el("span", "transcript-toggle");
+      toggle.title = t("viewer.transcript_toggle_title");
+      for (const [language, key] of [["original", "viewer.transcript_original"], ["german", "viewer.transcript_german"]]) {
+        const button = el("button", `transcript-toggle-btn${language === transcriptLanguage ? " active" : ""}`, t(key));
+        button.type = "button";
+        button.addEventListener("click", () => setTranscriptLanguage(language));
+        toggle.append(button);
+      }
+      heading.append(toggle);
+    }
+
+    function setTranscriptLanguage(language) {
+      transcriptLanguage = language;
+      localStorage.setItem(TRANSCRIPT_STORAGE_KEY, language);
+      renderMarkdown();
+      applyViewerSearchHighlight(false);
+    }
+
     // Load meeting details
     async function loadMeeting(id) {
       try {
@@ -885,11 +941,12 @@
         activeMeetingId = id;
         activeMeetingMeta = meta;
         rawCurrentMarkdown = data.markdown;
+        transcriptHasTranslation = transcriptVariant(data.markdown, "original") !== data.markdown.replace(/\r\n/g, "\n");
 
         viewTitle.innerText = meta.title || id;
         renderViewerMeta(meta);
 
-        markdownBody.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown));
+        renderMarkdown();
         applyViewerSearchHighlight(true);
         copyMdBtn.style.display = "flex";
         downloadMdBtn.style.display = "flex";
@@ -1202,7 +1259,7 @@
             const parent = node.parentNode;
             if (!parent) return NodeFilter.FILTER_REJECT;
             const tag = parent.nodeName.toUpperCase();
-            if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {
+            if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK" || parent.closest(".transcript-toggle")) {
               return NodeFilter.FILTER_REJECT;
             }
             return NodeFilter.FILTER_ACCEPT;
@@ -1510,6 +1567,7 @@
       loadDevices();
       if (activeMeetingMeta) {
         renderViewerMeta(activeMeetingMeta);
+        renderMarkdown();
         applyViewerSearchHighlight(false);
       } else {
         resetViewer();

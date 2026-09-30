@@ -242,5 +242,8 @@
   "viewer.no_selection": "Kein Meeting ausgewählt",
   "viewer.participants": "Teilnehmer: {names}",
   "viewer.search_matches_one": "🔍 {count} Treffer im Protokoll",
-  "viewer.search_matches_other": "🔍 {count} Treffer im Protokoll"
+  "viewer.search_matches_other": "🔍 {count} Treffer im Protokoll",
+  "viewer.transcript_german": "Deutsch",
+  "viewer.transcript_original": "Original",
+  "viewer.transcript_toggle_title": "Transkript in der Originalsprache oder in deutscher Übersetzung anzeigen"
 }

@@ -242,5 +242,8 @@
   "viewer.no_selection": "No meeting selected",
   "viewer.participants": "Participants: {names}",
   "viewer.search_matches_one": "🔍 {count} match in the minutes",
-  "viewer.search_matches_other": "🔍 {count} matches in the minutes"
+  "viewer.search_matches_other": "🔍 {count} matches in the minutes",
+  "viewer.transcript_german": "German",
+  "viewer.transcript_original": "Original",
+  "viewer.transcript_toggle_title": "Show the transcript in the original language or in the German translation"
 }

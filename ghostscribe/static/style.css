@@ -1600,7 +1600,8 @@
       flex-wrap: wrap;
     }
 
-    .audio-mode-btn {
+    .audio-mode-btn,
+    .transcript-toggle-btn {
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.08);
       color: var(--text-muted);
@@ -1616,13 +1617,15 @@
       gap: 0.3rem;
     }
 
-    .audio-mode-btn:hover {
+    .audio-mode-btn:hover,
+    .transcript-toggle-btn:hover {
       background: rgba(255, 255, 255, 0.08);
       color: #ffffff;
       border-color: rgba(255, 255, 255, 0.15);
     }
 
-    .audio-mode-btn.active {
+    .audio-mode-btn.active,
+    .transcript-toggle-btn.active {
       background: rgba(99, 102, 241, 0.2);
       border-color: var(--primary);
       color: #ffffff;
@@ -1652,6 +1655,14 @@
       color: #93c5fd;
       margin-top: 1.75rem;
       margin-bottom: 0.75rem;
+    }
+
+    /* Original / German switch next to the transcript heading */
+    .transcript-toggle {
+      display: inline-flex;
+      gap: 0.35rem;
+      margin-left: 0.75rem;
+      vertical-align: middle;
     }
 
     .markdown-body h3 {

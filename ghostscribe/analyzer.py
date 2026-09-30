@@ -90,8 +90,8 @@ _SYSTEM_PROMPT_TEMPLATE = """
 1. Nur Belegtes: Übernimm ausschließlich, was in der Aufnahme gesagt wird. Erfinde keine Namen, Zahlen, Termine, Beschlüsse oder Zuständigkeiten.
 2. Lücken sichtbar machen: Fehlt eine Angabe, schreibe „nicht genannt“. Unverständliche Stellen markierst du mit [unverständlich]; bei unsicherem Wortlaut (Namen, Zahlen, Fachbegriffe) setzt du (?) dahinter.
 3. Exakte Werte: Zahlen, Beträge, Daten, Versionsnummern und Ticket-IDs gibst du genau so wieder, wie sie gesagt werden. Relative Angaben („nächsten Freitag“) rechnest du anhand des Meetingdatums in ein Datum um und nennst beides, z. B. „Fr, 02.10.2026 (‚nächsten Freitag‘)“.
-4. Beschluss oder Vorschlag: Ein Beschluss liegt nur vor, wenn etwas ausdrücklich vereinbart oder von den Beteiligten bestätigt wird. Unbestätigte Vorschläge gehören zu „Offene Fragen & nächste Schritte“.
-5. Sprache: Das Protokoll schreibst du auf Deutsch. Zitate bleiben in der Originalsprache. Dialekt überträgst du behutsam ins Standarddeutsche, ohne den Sinn zu verändern.
+4. Beschlüsse und Aufgaben: Ein Beschluss liegt nur vor, wenn die Beteiligten etwas ausdrücklich vereinbaren oder bestätigen. Eine Aufgabe liegt nur vor, wenn jemand sie übernimmt oder ausdrücklich zugewiesen bekommt. Ankündigungen und Zusagen in Reden, Vorträgen oder Präsentationen sind weder Beschlüsse noch Aufgaben, sondern gehören zu den Kernpunkten. Unbestätigte Vorschläge gehören zu „Offene Fragen & nächste Schritte“.
+5. Sprache: Du schreibst auf Deutsch, unabhängig von der Sprache der Aufnahme. Ausnahmen: Das vollständige Transkript gibt jede Äußerung in der Originalsprache wieder; ist sie weder Deutsch noch Englisch, steht direkt darunter die deutsche Übersetzung als eingerückte Zitatzeile („  > …“). Zitate in den übrigen Abschnitten bleiben in der Originalsprache; ist ein Zitat weder Deutsch noch Englisch, folgt die deutsche Übersetzung in Klammern. Deutschen Dialekt überträgst du behutsam ins Standarddeutsche, ohne den Sinn zu verändern.
 6. Keine verwertbare Besprechung (Stille, nur Musik, Testaufnahme, weniger als eine Minute Gespräch): Gib statt des Protokolls nur einen kurzen Hinweis aus.{no_emotion_rule}
 
 # §. Sprecherzuordnung
@@ -113,9 +113,9 @@ Die Aufnahme basiert auf zwei Hardware-Quellen:
 - Prüfe vor der Ausgabe jede Phase des Meetings einzeln auf Beschlüsse und Aufgaben, die noch fehlen.
 
 # §. Zeitstempel und Umfang
-- Zeitstempel immer im Format [HH:MM:SS] ab Beginn der Aufnahme, Zeiträume als [HH:MM:SS–HH:MM:SS].
-- Dauer bis 45 Minuten: Kernpunkte nach Themen gliedern, im letzten Abschnitt ein vollständiges, bereinigtes Transkript (ohne Füllwörter, Versprecher, Wiederholungen).
-- Dauer über 45 Minuten: Kernpunkte in chronologische Phasen gliedern („### Phase 1 [00:00:00–00:42:10]: <Thema>“), im letzten Abschnitt ein verdichtetes Verlaufsprotokoll mit Schlüsselzitaten, Wendepunkten und Entscheidungen. Smalltalk, Pausen und Technikprobleme lässt du weg, damit das Ausgabelimit für Inhalte reicht.
+- Zeitstempel in allen Abschnitten immer im Format [HH:MM:SS] ab Beginn der Aufnahme, auch bei Aufnahmen unter einer Stunde (also [00:05:18], nie [05:18]); Zeiträume als [HH:MM:SS–HH:MM:SS].
+- Dauer bis 45 Minuten: Kernpunkte nach Themen gliedern, im letzten Abschnitt ein vollständiges Transkript. Vollständig heißt: jeder Redebeitrag vom Anfang bis zum Ende der Aufnahme, Satz für Satz – nichts zusammenfassen, kürzen oder auslassen. Bereinigt werden nur Füllwörter, Versprecher und Wortwiederholungen. Setze bei jedem Sprecherwechsel einen Zeitstempel, in längeren Beiträgen spätestens jede Minute einen neuen.
+- Dauer über 45 Minuten: Kernpunkte in chronologische Phasen gliedern („### Phase 1 [00:00:00–00:42:10]: <Thema>“), im letzten Abschnitt ein verdichtetes Verlaufsprotokoll auf Deutsch mit Schlüsselzitaten in der Originalsprache, Wendepunkten und Entscheidungen. Smalltalk, Pausen und Technikprobleme lässt du weg, damit das Ausgabelimit für Inhalte reicht.
 
 # §. Priorität von Aufgaben
 - 🔴 Hoch: {priority_high}
@@ -139,13 +139,13 @@ Halte diese Reihenfolge ein. Platzhalter stehen in <spitzen Klammern>. Abschnitt
 <3–6 Sätze: Anlass, wichtigste Ergebnisse und Entscheidungen, {summary_risk}>
 
 {mood_section}## 📌 Kernpunkte & Diskussionsverlauf
-<Je Thema bzw. Phase: {positions} und Argumente der Beteiligten mit Namen, Ergebnis.>
+<Je Thema bzw. Phase: {positions} und Argumente der Beteiligten mit Namen und [HH:MM:SS], Ergebnis.>
 
 ## ✅ Beschlüsse
 - [HH:MM:SS] <Beschluss> — bestätigt von <Namen>
 
 ## 📋 Aufgaben
-<Sortiert nach Priorität. Ohne klar benannte zuständige Person: „**offen**“.>
+<Sortiert nach Priorität. Zuständig ist genau die Person oder Stelle, die im Gespräch genannt wird; ergänze keine Abteilungen, Rollen oder Organisationen. Ohne klar benannte Zuständigkeit: „**offen**“.>
 - [ ] 🔴 **<Zuständig>**: <Aufgabe> — Frist: <Datum oder „nicht genannt“> — {task_reason} [HH:MM:SS]
 - [ ] 🟡 **<Zuständig>**: <Aufgabe> — Frist: <Datum oder „nicht genannt“> [HH:MM:SS]
 - [ ] 🟢 **<Zuständig>**: <Aufgabe> — Frist: <Datum oder „nicht genannt“> [HH:MM:SS]
@@ -158,7 +158,8 @@ Halte diese Reihenfolge ein. Platzhalter stehen in <spitzen Klammern>. Abschnitt
 ---
 
 ## 🎙️ Transkript / Verlauf
-- [HH:MM:SS] **<Name>:** <Äußerung>{tone_line}
+- [HH:MM:SS] **<Name>:** <Äußerung in der Originalsprache>
+  > <Deutsche Übersetzung – nur, wenn die Äußerung weder Deutsch noch Englisch ist>{tone_line}
 """
 
 # Nur im erweiterten Modus (ohne EU AI Act) enthaltene Abschnitte
@@ -174,13 +175,14 @@ Regeln:
 - Formuliere als Wahrnehmung („wirkt genervt“), nicht als Tatsache.
 - Achte auf Ironie und Scherz: Lachen während einer Beschwerde ist oft Ironie, keine Freude. Ist die Deutung unklar, markiere nichts.
 - Themen mit deutlicher Frustration oder Dringlichkeit hebst du im Stimmungsbild hervor und berücksichtigst sie bei der Priorität.
+- Hörbare Reaktionen der Zuhörer (Applaus, Gelächter, Buhrufe, Zwischenrufe) vermerkst du im Transkript an der passenden Stelle in eckigen Klammern, z. B. [Applaus], und berücksichtigst sie im Stimmungsbild.
 
 """
 
 _MOOD_SECTION = """## 🎭 Stimmungsbild
 - **Gesamtklima:** <1–2 Sätze>
-- 🔥 **Frustration & Bedenken:** <wer, worüber, [Zeitstempel], Beleg>
-- 🎉 **Erfolge, Freude & Erleichterung:** <wer, worüber, [Zeitstempel]>
+- 🔥 **Frustration & Bedenken:** <wer, worüber, [HH:MM:SS], Beleg>
+- 🎉 **Erfolge, Freude & Erleichterung:** <wer, worüber, [HH:MM:SS]>
 - ⚡ **Kontroversen:** <wo gingen die Meinungen auseinander, wer vertrat was, ob geklärt>
 
 """
@@ -209,7 +211,7 @@ _PROMPT_VARIANTS = {
         "mood_section": _MOOD_SECTION,
         "positions": "Positionen",
         "task_reason": "Grund: <kurz, z. B. „Blocker für Release“, „deutlicher Ärger über Verzögerung“>",
-        "tone_line": "\n- [HH:MM:SS] **<Name>** [<Tonhinweis, nur bei markanten Momenten, z. B. hörbar verärgert, erleichtert lachend, skeptisch>]: <Äußerung>",
+        "tone_line": "\n- [HH:MM:SS] **<Name>** [<Tonhinweis, nur bei markanten Momenten, z. B. hörbar verärgert, erleichtert lachend, skeptisch>]: <Äußerung in der Originalsprache>",
     },
 }
 
@@ -494,6 +496,8 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
                         config=types.GenerateContentConfig(
                             system_instruction=instruction_to_use,
                             temperature=0.2,
+                            # No tools are used; also avoids the SDK's AFC warning on every request
+                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                         ),
                     )
                     self.model = current_model
