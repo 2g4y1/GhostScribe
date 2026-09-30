@@ -307,7 +307,7 @@ class MeetingRecorder:
                 "1",
                 mp3_filepath,
             ]
-            subprocess.run(cmd, capture_output=True, check=True)
+            subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, check=True)  # no keys for ffmpeg
             if os.path.exists(mp3_filepath) and os.path.getsize(mp3_filepath) > 0:
                 return mp3_filepath
         except Exception as e:

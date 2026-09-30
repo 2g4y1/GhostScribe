@@ -64,6 +64,13 @@ MEETING_TYPE_FOCUS = {
 }
 
 
+# What stands in front of the title in the first heading of the minutes, e.g. "📝 Besprechungsprotokoll: "
+_TITLE_PREFIX = re.compile(
+    r"^[\s\W\U00010000-\U0010ffff]*\b(Besprechungsprotokoll|Protokoll|Meeting Minutes|Meeting)\b\s*[:\-–—]?\s*",
+    re.IGNORECASE,
+)
+
+
 def extract_title_from_markdown(markdown_text: str, fallback: str = "") -> str:
     """Extracts a clean meeting title from the first Markdown H1 heading."""
     if not markdown_text:
@@ -72,17 +79,26 @@ def extract_title_from_markdown(markdown_text: str, fallback: str = "") -> str:
         line = line.strip()
         if line.startswith("#"):
             raw_title = line.lstrip("#").strip()
-            clean_title = re.sub(
-                r"^[\s\W\U00010000-\U0010ffff]*\b(Besprechungsprotokoll|Protokoll|Meeting Minutes|Meeting)\b\s*[:\-–—]?\s*",
-                "",
-                raw_title,
-                flags=re.IGNORECASE,
-            ).strip()
+            clean_title = _TITLE_PREFIX.sub("", raw_title).strip()
             if clean_title:
                 return clean_title
             if raw_title:
                 return raw_title
     return fallback
+
+
+def retitle_markdown(markdown_text: str, title: str) -> str:
+    """Puts a new title into the first heading of the minutes; a prefix like "📝 Besprechungsprotokoll: " stays.
+    Minutes that start with a section instead of a title keep their text."""
+    lines = markdown_text.split("\n")
+    for index, line in enumerate(lines):
+        if line.strip().startswith("#"):
+            if line.startswith("# "):
+                prefix = _TITLE_PREFIX.match(line[2:].strip())
+                kept = prefix.group(0).rstrip() if prefix else ""
+                lines[index] = f"# {kept} {title}" if kept[-1:] in (":", "-", "–", "—") else f"# {title}"
+            break
+    return "\n".join(lines)
 
 
 _SYSTEM_PROMPT_TEMPLATE = """
@@ -254,6 +270,49 @@ def recording_start(audio_filepath: str) -> datetime:
         return datetime.fromtimestamp(os.path.getmtime(audio_filepath))
 
 
+# Channel activity: each channel is judged against its own levels, because the microphone is often far quieter than
+# the system audio (20 dB on a real Teams call) and the user often speaks while others do
+ACTIVE_ABOVE_FLOOR_DB = 20.0  # a channel is active this far above its quiet level (10th percentile) ...
+ACTIVE_MIN_DB = -50.0  # ... but not below this level ...
+ACTIVE_ALWAYS_DB = -40.0  # ... and always from this level on (a channel that is busy almost all the time)
+LEAK_MARGIN_DB = 10.0  # the user speaks when the microphone is this far above the system audio that reaches it
+DOMINANCE_DB = 6.0  # both speak: the channel this much nearer to its usual speaking level wins, otherwise both
+
+
+def _chunk_levels(data: np.ndarray, chunk_len: int) -> np.ndarray:
+    """Level in dBFS per chunk of the microphone (column 0) and the system audio (column 1)."""
+    num_chunks = len(data) // chunk_len
+    power = np.empty((num_chunks, 2))
+    for start in range(0, num_chunks, 256):  # in blocks: a long recording as floats would take gigabytes
+        end = min(num_chunks, start + 256)
+        block = data[start * chunk_len : end * chunk_len, :2].astype(np.float64)
+        power[start:end] = (block.reshape(-1, chunk_len, 2) ** 2).mean(axis=1)
+    return 10 * np.log10(power / 32768**2 + 1e-12)
+
+
+def _channel_labels(levels: np.ndarray) -> np.ndarray:
+    """MIC, LOOP, BOTH or SILENCE per chunk."""
+    mic_db, loop_db = levels[:, 0], levels[:, 1]
+
+    def active(db):
+        return db > min(max(np.percentile(db, 10) + ACTIVE_ABOVE_FLOOR_DB, ACTIVE_MIN_DB), ACTIVE_ALWAYS_DB)
+
+    mic_on, loop_on = active(mic_db), active(loop_db)
+    # System audio that reaches the microphone (speakers, open headset) follows the system level at a fixed distance
+    leak = np.median(mic_db[loop_on] - loop_db[loop_on]) if loop_on.sum() >= 10 else -60.0
+    user = mic_on & (~loop_on | (mic_db - loop_db > leak + LEAK_MARGIN_DB))
+    labels = np.where(user & ~loop_on, "MIC", np.where(loop_on & ~user, "LOOP", "SILENCE"))
+    both = user & loop_on
+    if both.any():
+        mic_rel = mic_db - np.percentile(mic_db[user], 90)
+        loop_rel = loop_db - np.percentile(loop_db[loop_on], 90)
+        louder = np.where(
+            mic_rel > loop_rel + DOMINANCE_DB, "MIC", np.where(loop_rel > mic_rel + DOMINANCE_DB, "LOOP", "BOTH")
+        )
+        labels[both] = louder[both]
+    return labels
+
+
 def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5) -> str:
     """
     Analyzes hardware stereo channels (Channel 0: Mic/Host, Channel 1: Loopback/Remote)
@@ -283,23 +342,7 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         current_label = None
         seg_start = 0.0
 
-        for i in range(num_chunks):
-            chunk = data[i * chunk_len : (i + 1) * chunk_len]
-            mic_rms = float(np.sqrt(np.mean(chunk[:, 0].astype(float) ** 2)))
-            loop_rms = float(np.sqrt(np.mean(chunk[:, 1].astype(float) ** 2)))
-
-            mic_act = mic_rms > 400
-            loop_act = loop_rms > 400
-
-            if mic_act and not loop_act:
-                lbl = "MIC"
-            elif loop_act and not mic_act:
-                lbl = "LOOP"
-            elif mic_act and loop_act:
-                lbl = "MIC" if mic_rms > loop_rms * 1.8 else ("LOOP" if loop_rms > mic_rms * 1.8 else "BOTH")
-            else:
-                lbl = "SILENCE"
-
+        for i, lbl in enumerate(_channel_labels(_chunk_levels(data, chunk_len))):
             if lbl != current_label:
                 if current_label and current_label != "SILENCE":
                     raw_segments.append((current_label, seg_start, i * chunk_sec))
@@ -330,8 +373,8 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         lines = [
             f"Sprechanteil laut Hardware: Mikrofon (Nutzer) {mic_share:.0f} %, Systemton (Remote) {total_loop / tot * 100:.0f} %"
         ]
-        if mic_share < 5:
-            lines.append("Das Mikrofon war nahezu stumm: Der Nutzer hat so gut wie nicht gesprochen.")
+        if total_mic + total_both < 3:
+            lines.append("Das Mikrofon war nahezu stumm: Der Nutzer hat höchstens einzelne Wörter gesagt.")
         lines.append("Verlauf (M = Mikrofon/Nutzer, S = Systemton/Remote, B = beide gleichzeitig):")
         labels = {"MIC": "M", "LOOP": "S", "BOTH": "B"}
         lines += [f"[{format_duration(s)}–{format_duration(e)}] {labels[lbl]}" for lbl, s, e in merged]

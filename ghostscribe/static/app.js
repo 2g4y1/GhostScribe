@@ -16,6 +16,8 @@
     let voiceRecognitionEnabled = false;
     let voiceWorkers = 1; // parallel processes for the voice recognition, at most voiceWorkersMax
     let voiceWorkersMax = 1;
+    const CHEVRON_ICON = '<svg class="chevron" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>';
+    const PLAY_ICON = '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" /></svg>';
     const TRASH_ICON = '<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>';
 
     // Creates an element; text is always set as textContent and never parsed as HTML
@@ -25,6 +27,93 @@
       if (text !== undefined) node.textContent = text;
       return node;
     }
+
+    // Tooltips in the design of the page: the title of an element moves into data-tooltip when the pointer or the
+    // keyboard focus reaches it, so the browser shows none of its own
+    const tooltip = el("div", "tooltip");
+    tooltip.id = "tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    document.body.append(tooltip);
+    let tooltipTarget = null;
+    let tooltipTimer = null;
+
+    function tooltipSource(node) {
+      const target = node instanceof Element ? node.closest("[title], [data-tooltip]") : null;
+      if (target && target.hasAttribute("title")) {
+        const text = target.getAttribute("title");
+        target.removeAttribute("title");
+        target.dataset.tooltip = text;
+        if (text && !target.hasAttribute("aria-label") && !target.textContent.trim()) target.setAttribute("aria-label", text);
+      }
+      return target && target.dataset.tooltip ? target : null;
+    }
+
+    function showTooltip(target) {
+      tooltip.textContent = target.dataset.tooltip;
+      tooltip.style.left = tooltip.style.top = "0px";
+      const box = target.getBoundingClientRect();
+      const tip = tooltip.getBoundingClientRect();
+      const below = box.bottom + 8 + tip.height <= window.innerHeight;
+      tooltip.style.left = `${Math.min(Math.max(8, box.left + box.width / 2 - tip.width / 2), window.innerWidth - tip.width - 8)}px`;
+      tooltip.style.top = `${below ? box.bottom + 8 : box.top - tip.height - 8}px`;
+      tooltip.classList.add("visible");
+      if (target.getAttribute("aria-label") !== target.dataset.tooltip) target.setAttribute("aria-describedby", "tooltip");
+      tooltipTarget = target;
+    }
+
+    function hideTooltip() {
+      clearTimeout(tooltipTimer);
+      tooltip.classList.remove("visible");
+      if (tooltipTarget) tooltipTarget.removeAttribute("aria-describedby");
+      tooltipTarget = null;
+    }
+
+    document.addEventListener("pointerover", (e) => {
+      const target = e.target instanceof Element && e.target.closest("option") ? null : tooltipSource(e.target);
+      if (target && target === tooltipTarget) return;
+      hideTooltip();
+      if (target) tooltipTimer = setTimeout(() => showTooltip(target), 350);
+    });
+    document.addEventListener("focusin", (e) => {
+      hideTooltip();
+      const target = tooltipSource(e.target);
+      if (target && e.target.matches(":focus-visible")) showTooltip(target);
+    });
+    for (const type of ["pointerdown", "focusout", "keydown"]) document.addEventListener(type, hideTooltip);
+    document.addEventListener("scroll", hideTooltip, true);
+
+    // Messages and confirmations in the design of the page instead of the browser's alert() and confirm()
+    const dialogModal = document.getElementById("dialogModal");
+    const dialogMessage = document.getElementById("dialogMessage");
+    const dialogConfirm = document.getElementById("dialogConfirm");
+    const dialogCancel = document.getElementById("dialogCancel");
+    let closeDialog = null;
+
+    function showDialog(message, { confirmText = t("common.ok"), cancelable = false, danger = false } = {}) {
+      if (closeDialog) closeDialog(false);
+      return new Promise(resolve => {
+        dialogMessage.textContent = message;
+        dialogConfirm.textContent = confirmText;
+        dialogConfirm.classList.toggle("danger", danger);
+        dialogCancel.hidden = !cancelable;
+        closeDialog = (result) => {
+          closeDialog = null;
+          dialogModal.classList.remove("active");
+          resolve(result);
+        };
+        dialogModal.classList.add("active");
+        dialogConfirm.focus();
+      });
+    }
+
+    const alertDialog = (message) => showDialog(message);
+    const confirmDialog = (message, confirmText) => showDialog(message, { confirmText, cancelable: true, danger: true });
+
+    dialogConfirm.addEventListener("click", () => closeDialog?.(true));
+    dialogCancel.addEventListener("click", () => closeDialog?.(false));
+    dialogModal.addEventListener("click", (e) => {
+      if (e.target === dialogModal) closeDialog?.(false);
+    });
 
     function isBusy() {
       return currentStatus === "recording" || currentStatus === "processing";
@@ -351,6 +440,10 @@
 
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
+      if (closeDialog) {
+        closeDialog(false); // a message or confirmation closes first, the settings behind it stay open
+        return;
+      }
       if (imageLightboxModal && imageLightboxModal.style.display === "flex") {
         closeLightbox();
       }
@@ -820,26 +913,26 @@
             })
           });
           if (!res.ok) {
-            alert(t("alert.start_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+            alertDialog(t("alert.start_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           }
         } catch (e) {
-          alert(t("alert.network_error", { message: e }));
+          alertDialog(t("alert.network_error", { message: e }));
         }
       } else if (currentStatus === "recording") {
         try {
           const res = await fetch("/api/record/stop", { method: "POST" });
           if (!res.ok) {
-            alert(t("alert.stop_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+            alertDialog(t("alert.stop_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           }
         } catch (e) {
-          alert(t("alert.network_error", { message: e }));
+          alertDialog(t("alert.network_error", { message: e }));
         }
       }
     });
 
     // Cancel Record
     cancelRecordBtn.addEventListener("click", async () => {
-      if (confirm(t("record.confirm_discard"))) {
+      if (await confirmDialog(t("record.confirm_discard"), t("record.discard"))) {
         try {
           const res = await fetch("/api/record/cancel", { method: "POST" });
           if (res.ok) {
@@ -847,7 +940,7 @@
             pollStatus();
           }
         } catch (e) {
-          alert(t("alert.discard_failed", { message: e }));
+          alertDialog(t("alert.discard_failed", { message: e }));
         }
       }
     });
@@ -855,7 +948,7 @@
     // Smart 1-Click Copy: Formatted Rich HTML (Teams, Outlook, Slack, Word) + Clean Markdown (Notepad, Code)
     copyMdBtn.addEventListener("click", async () => {
       if (!rawCurrentMarkdown) return;
-      const markdown = visibleMarkdown(); // the transcript in the language that is shown
+      const markdown = exportable(visibleMarkdown()); // the transcript (if chosen) in the language that is shown
       try {
         const htmlContent = DOMPurify.sanitize(marked.parse(markdown));
         const blobHtml = new Blob([htmlContent], { type: "text/html" });
@@ -887,7 +980,7 @@
     // Download Markdown
     downloadMdBtn.addEventListener("click", () => {
       if (rawCurrentMarkdown) {
-        const blob = new Blob([rawCurrentMarkdown], { type: "text/markdown;charset=utf-8" });
+        const blob = new Blob([exportable(rawCurrentMarkdown)], { type: "text/markdown;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -904,7 +997,7 @@
       const modeBadge = el("span", `badge-tag ${isAiAct ? "ai-act" : "sentiment"}`, t(isAiAct ? "viewer.badge_ai_act" : "viewer.badge_sentiment"));
       modeBadge.title = t(isAiAct ? "viewer.badge_ai_act_title" : "viewer.badge_sentiment_title");
       const details = [t("viewer.meeting_on", { date: meetingDate(meta, { dateStyle: "long", timeStyle: "short" }) }), t("viewer.model", { model: meta.model_used })];
-      viewMeta.replaceChildren(details.join(" • ") + " ", modeBadge);
+      viewMeta.replaceChildren(details.join(" • "), modeBadge);
       const names = splitNames(meta.participants);
       if (names.length) {
         const selfKey = speakerKey(meta.user_name || "");
@@ -922,7 +1015,8 @@
       const firstName = key => key.split(" ")[0];
       const known = key => {
         if (keys.includes(key)) return key;
-        const sameFirstName = keys.filter(other => firstName(other) === firstName(key));
+        // "Bernd" and "Bernd Müller" are one person, "Stimme 1" and "Stimme 2" are not
+        const sameFirstName = keys.filter(other => other === firstName(key) || key === firstName(other));
         return sameFirstName.length === 1 ? sameFirstName[0] : null;
       };
       const labels = [...markdownBody.querySelectorAll("strong")].map(strong => [strong, speakerKey(strong.textContent.replace(/:\s*$/, ""))]);
@@ -966,6 +1060,7 @@
     function renderMarkdown() {
       markdownBody.innerHTML = DOMPurify.sanitize(marked.parse(visibleMarkdown()));
       if (transcriptHasTranslation) addTranscriptToggle();
+      collapseTranscript();
       if (activeMeetingMeta) colorSpeakers(activeMeetingMeta);
       if (audioElement.getAttribute("src")) linkTimestamps();
     }
@@ -1002,8 +1097,54 @@
       audioElement.play();
     });
 
+    const transcriptHeading = () => [...markdownBody.querySelectorAll("h2")].find(h => /Transkript|Transcript/i.test(h.textContent));
+
+    // The transcript starts collapsed for every meeting; copy and download leave it out unless the checkbox
+    // in its heading is set (remembered in the browser)
+    const EXPORT_TRANSCRIPT_KEY = "ghostscribe_export_transcript";
+    let transcriptOpen = false;
+    let exportTranscript = localStorage.getItem(EXPORT_TRANSCRIPT_KEY) === "true";
+
+    function collapseTranscript() {
+      const heading = transcriptHeading();
+      if (!heading) return;
+      const details = el("details", "transcript-section");
+      heading.replaceWith(details);
+      while (details.nextSibling && details.nextSibling.nodeName !== "H2") details.append(details.nextSibling);
+      const summary = el("summary");
+      summary.title = t("viewer.transcript_expand");
+      summary.append(heading, transcriptExportOption());
+      details.prepend(summary);
+      details.open = transcriptOpen;
+      details.addEventListener("toggle", () => (transcriptOpen = details.open));
+    }
+
+    function transcriptExportOption() {
+      const option = el("label", "transcript-export");
+      const checkbox = el("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = exportTranscript;
+      checkbox.addEventListener("change", () => {
+        exportTranscript = checkbox.checked;
+        localStorage.setItem(EXPORT_TRANSCRIPT_KEY, String(exportTranscript));
+      });
+      option.append(checkbox, t("viewer.transcript_export"));
+      return option;
+    }
+
+    function exportable(markdown) {
+      if (exportTranscript) return markdown;
+      const lines = markdown.split(/\r?\n/);
+      const start = lines.findIndex(line => /^##\s.*(Transkript|Transcript)/i.test(line));
+      if (start < 0) return markdown;
+      const next = lines.findIndex((line, i) => i > start && /^##\s/.test(line));
+      let end = start;
+      while (end > 0 && /^\s*(-{3,}|\*{3,}|_{3,})?\s*$/.test(lines[end - 1])) end--; // the separator above belongs to it
+      return [...lines.slice(0, end), ...(next < 0 ? [] : ["", ...lines.slice(next)])].join("\n").trimEnd() + "\n";
+    }
+
     function addTranscriptToggle() {
-      const heading = [...markdownBody.querySelectorAll("h2")].find(h => /Transkript|Transcript/i.test(h.textContent));
+      const heading = transcriptHeading();
       if (!heading) return;
       const toggle = el("span", "transcript-toggle");
       toggle.title = t("viewer.transcript_toggle_title");
@@ -1026,10 +1167,20 @@
     // Voices of the meeting (local voice recognition): recognized profiles and unknown voices to name
     const voicesPanel = document.getElementById("voicesPanel");
 
+    // The voices start collapsed; their heading counts them and says how many still have no name
+    let voicesOpen = false;
+    voicesPanel.addEventListener("toggle", () => (voicesOpen = voicesPanel.open));
+
     function renderVoices(meta) {
       const voices = meta.voices || [];
+      const unnamed = voices.filter(voice => !voice.profile_id).length;
+      const summary = el("summary", "voices-title", t("viewer.voices_title"));
+      summary.append(el("span", "voices-count", String(voices.length)));
+      if (unnamed) summary.append(el("span", "voices-unnamed", t("viewer.voices_unnamed", { count: unnamed })));
+      summary.insertAdjacentHTML("beforeend", CHEVRON_ICON);
       voicesPanel.hidden = voices.length === 0;
-      voicesPanel.replaceChildren(el("div", "voices-title", t("viewer.voices_title")), ...voices.map(voiceRow));
+      voicesPanel.replaceChildren(summary, ...voices.map(voiceRow));
+      voicesPanel.open = voicesOpen;
     }
 
     function voiceRow(voice) {
@@ -1045,8 +1196,10 @@
         el("span", "voice-time", t("viewer.voice_speaking_time", { time: formatTime(voice.seconds) }))
       );
 
-      const play = el("button", "mini-action-btn", t("viewer.voice_play"));
+      const play = el("button", "mini-action-btn");
       play.type = "button";
+      play.innerHTML = PLAY_ICON;
+      play.append(t("viewer.voice_play"));
       play.addEventListener("click", () => {
         audioElement.currentTime = voice.intervals[0][0];
         audioElement.play();
@@ -1084,14 +1237,14 @@
           body: JSON.stringify({ label, name, consent })
         });
         if (!res.ok) {
-          alert(t("alert.voice_save_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          alertDialog(t("alert.voice_save_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           return;
         }
         showToast(t("toast.voice_saved", { name }));
         await loadMeeting(activeMeetingId);
         fetchMeetings();
       } catch (err) {
-        alert(t("alert.network_error", { message: err }));
+        alertDialog(t("alert.network_error", { message: err }));
       }
     }
 
@@ -1114,13 +1267,13 @@
       remove.type = "button";
       remove.title = t("settings.voice_profile_delete");
       remove.addEventListener("click", async () => {
-        if (!confirm(t("confirm.delete_voice", { name: profile.name }))) return;
+        if (!(await confirmDialog(t("confirm.delete_voice", { name: profile.name }), t("common.delete")))) return;
         const res = await fetch(`/api/voices/${encodeURIComponent(profile.id)}`, { method: "DELETE" });
         if (res.ok) {
           showToast(t("toast.voice_deleted"));
           loadVoiceProfiles();
         } else {
-          alert(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          alertDialog(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
         }
       });
       const item = el("li", "voice-profile");
@@ -1140,12 +1293,14 @@
         const data = await res.json();
         const meta = data.metadata;
 
+        if (id !== activeMeetingId) transcriptOpen = voicesOpen = false; // another meeting starts collapsed again
         activeMeetingId = id;
         activeMeetingMeta = meta;
         rawCurrentMarkdown = data.markdown;
         transcriptHasTranslation = transcriptVariant(data.markdown, "original") !== data.markdown.replace(/\r\n/g, "\n");
 
-        viewTitle.innerText = meta.title || id;
+        endTitleEdit();
+        viewTitle.textContent = meta.title || id;
         renderViewerMeta(meta);
         renderVoices(meta);
         contentGrid.classList.add("meeting-open");
@@ -1223,7 +1378,7 @@
 
     async function deleteMeetingPrompt(id, title) {
       const displayTitle = title || id;
-      if (!confirm(t("confirm.delete_meeting", { name: displayTitle }))) {
+      if (!(await confirmDialog(t("confirm.delete_meeting", { name: displayTitle }), t("common.delete")))) {
         return;
       }
       try {
@@ -1234,12 +1389,73 @@
           }
           await fetchMeetings();
         } else {
-          alert(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          alertDialog(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
         }
       } catch (err) {
-        alert(t("alert.network_error", { message: err }));
+        alertDialog(t("alert.network_error", { message: err }));
       }
     }
+
+    // The pencil next to the title opens a field in its place: Enter or leaving the field saves, Escape discards.
+    // The server also puts the new title into the first heading of the minutes.
+    const viewTitleInput = document.getElementById("viewTitleInput");
+    const renameMeetingBtn = document.getElementById("renameMeetingBtn");
+
+    function editTitle() {
+      viewTitleInput.value = viewTitle.textContent;
+      viewTitle.hidden = renameMeetingBtn.hidden = true;
+      viewTitleInput.hidden = false;
+      viewTitleInput.focus();
+      viewTitleInput.select();
+    }
+
+    function endTitleEdit() {
+      viewTitleInput.hidden = true;
+      viewTitle.hidden = renameMeetingBtn.hidden = false;
+    }
+
+    async function saveTitle() {
+      if (viewTitleInput.hidden) return;
+      const id = activeMeetingId;
+      const title = viewTitleInput.value.trim();
+      endTitleEdit();
+      if (!id || !title || title === viewTitle.textContent) return;
+      try {
+        const res = await fetch(`/api/meetings/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alertDialog(t("alert.rename_failed", { message: errorText(data) }));
+          return;
+        }
+        const meeting = cachedMeetings.find(m => m.id === id);
+        if (meeting) Object.assign(meeting, { title: data.title, content: data.markdown });
+        if (id === activeMeetingId) {
+          activeMeetingMeta.title = data.title;
+          viewTitle.textContent = data.title;
+          rawCurrentMarkdown = data.markdown;
+          renderMarkdown();
+          applyViewerSearchHighlight(false);
+        }
+        renderMeetingsList();
+      } catch (err) {
+        alertDialog(t("alert.network_error", { message: err }));
+      }
+    }
+
+    renameMeetingBtn.addEventListener("click", editTitle);
+    viewTitleInput.addEventListener("blur", saveTitle);
+    viewTitleInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation(); // Escape only ends the editing, it closes nothing behind it
+      if (e.key === "Enter") saveTitle();
+      else endTitleEdit();
+      renameMeetingBtn.focus();
+    });
 
     // Closes the minutes; the meetings list takes the full width again
     function closeMeeting() {
@@ -1369,13 +1585,13 @@
           body: JSON.stringify({ ai_act_mode: defaultAiActMode, user_name: userSpeakerName.value.trim(), ...contextPayload() })
         });
         if (!res.ok) {
-          alert(t("alert.analyze_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          alertDialog(t("alert.analyze_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           return;
         }
         endContextStep();
         pollStatus();
       } catch (err) {
-        alert(t("alert.network_error", { message: err }));
+        alertDialog(t("alert.network_error", { message: err }));
       }
     }
 
@@ -1387,14 +1603,14 @@
           body: JSON.stringify(contextPayload())
         });
         if (!res.ok) {
-          alert(t("alert.context_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          alertDialog(t("alert.context_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           return;
         }
         endContextStep();
         showToast(t("toast.recording_kept"));
         fetchUnprocessed();
       } catch (err) {
-        alert(t("alert.network_error", { message: err }));
+        alertDialog(t("alert.network_error", { message: err }));
       }
     });
 
@@ -1406,17 +1622,17 @@
     }
 
     async function deleteRecording(filename) {
-      if (!confirm(t("confirm.delete_recording", { name: filename }))) {
+      if (!(await confirmDialog(t("confirm.delete_recording", { name: filename }), t("common.delete")))) {
         return;
       }
       try {
         const res = await fetch(`/api/recordings/${encodeURIComponent(filename)}`, { method: "DELETE" });
         if (!res.ok) {
-          alert(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          alertDialog(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
         }
         fetchUnprocessed();
       } catch (err) {
-        alert(t("alert.network_error", { message: err }));
+        alertDialog(t("alert.network_error", { message: err }));
       }
     }
 
@@ -1555,6 +1771,8 @@
       }
 
       const count = highlightTextInElement(markdownBody, query);
+      const transcript = markdownBody.querySelector("details.transcript-section");
+      if (transcript && transcript.querySelector("mark.search-highlight")) transcript.open = true; // show hits inside
 
       if (searchMatchBadge) {
         if (count > 0) {
@@ -1604,6 +1822,14 @@
       });
     }
 
+    // A title that does not fit runs back and forth while the pointer rests on its meeting
+    function prepareMarquee(box, text) {
+      const overflow = Math.ceil(text.getBoundingClientRect().width - box.clientWidth);
+      box.classList.toggle("overflowing", overflow > 2);
+      box.style.setProperty("--marquee-distance", `${-overflow}px`);
+      box.style.setProperty("--marquee-duration", `${Math.max(2, overflow / 40)}s`);
+    }
+
     function renderMeetingsList() {
       const query = (searchInput.value || "").toLowerCase().trim();
       const matches = (m, fields) => fields.some(f => (m[f] || "").toLowerCase().includes(query));
@@ -1617,8 +1843,10 @@
       meetingsList.replaceChildren(...filtered.map(m => {
         const item = el("div", "meeting-item" + (m.id === activeMeetingId ? " active" : ""));
         const body = el("div", "meeting-item-body");
-        const title = el("div", "meeting-item-title", m.title || m.id);
-        highlightTextInElement(title, query);
+        const title = el("div", "meeting-item-title");
+        const titleText = el("span", "", m.title || m.id);
+        title.append(titleText);
+        highlightTextInElement(titleText, query);
         const date = meetingDate(m, { dateStyle: "short", timeStyle: "short" });
         body.append(title, el("div", "meeting-item-date", date + (m.participants ? " • " + m.participants : "")));
         if (query && !matches(m, ["title", "participants"]) && matches(m, ["content"])) {
@@ -1633,6 +1861,7 @@
         });
         item.append(body, deleteBtn);
         item.addEventListener("click", () => loadMeeting(m.id));
+        item.addEventListener("pointerenter", () => prepareMarquee(title, titleText));
         return item;
       }));
     }
@@ -1658,7 +1887,7 @@
           unprocessedSection.hidden = isBusy() || unprocessedList.childElementCount === 0;
           errorBanner.hidden = data.status !== "error";
           if (data.status === "error") {
-            errorBanner.textContent = `⚠️ ${data.last_error || t("error.unknown")}`;
+            errorBanner.textContent = data.last_error || t("error.unknown");
           }
           defaultAiActMode = data.default_ai_act_mode;
           renderModeWarning();

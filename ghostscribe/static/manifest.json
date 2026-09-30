@@ -1,0 +1,14 @@
+{
+  "name": "GhostScribe",
+  "short_name": "GhostScribe",
+  "description": "Bot-free meeting recorder with AI minutes",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07090e",
+  "theme_color": "#07090e",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.webp", "sizes": "512x512", "type": "image/webp" }
+  ]
+}

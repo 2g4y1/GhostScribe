@@ -54,6 +54,22 @@ def test_delete_meeting_removes_every_file_of_the_meeting(client, workdir, write
     assert not [path for path in files if path.exists()]
 
 
+def test_rename_meeting_changes_the_list_and_the_heading_of_the_minutes(client, workdir, write_file):
+    write_file(
+        "meetings/meeting_title.json", json.dumps({"title": "Alt", "audio_file": "recordings/meeting_title.mp3"})
+    )
+    write_file("meetings/meeting_title.md", "# 📝 Besprechungsprotokoll: Alt\n\n## Zusammenfassung")
+
+    response = client.patch("/api/meetings/meeting_title", json={"title": "  Neuer   Titel "})
+
+    assert response.status_code == 200 and response.json()["title"] == "Neuer Titel"
+    assert json.loads((workdir / "meetings/meeting_title.json").read_text(encoding="utf-8"))["title"] == "Neuer Titel"
+    minutes = (workdir / "meetings/meeting_title.md").read_text(encoding="utf-8")
+    assert minutes.startswith("# 📝 Besprechungsprotokoll: Neuer Titel\n")
+    assert client.patch("/api/meetings/meeting_title", json={"title": "   "}).status_code == 400
+    assert client.patch("/api/meetings/meeting_missing", json={"title": "Neu"}).status_code == 404
+
+
 def test_unprocessed_recordings_are_listed_once_and_can_be_deleted(client, workdir, write_file):
     write_file("recordings/meeting_a.mp3")
     write_file("recordings/meeting_a.wav")

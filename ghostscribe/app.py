@@ -6,6 +6,7 @@ import base64
 import glob
 import json
 import logging
+import mimetypes
 import os
 import threading
 import time
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ghostscribe.analyzer import DEFAULT_MODEL, MeetingAnalyzer, check_api_key, recording_start
+from ghostscribe.analyzer import DEFAULT_MODEL, MeetingAnalyzer, check_api_key, recording_start, retitle_markdown
 from ghostscribe.i18n import available_languages, configured_language, translate
 from ghostscribe.recorder import MeetingRecorder
 from ghostscribe.utils import APP_URL, PORT, format_duration, print_banner, update_env_file
@@ -69,6 +70,7 @@ async def allow_only_local_ui(request: Request, call_next):
 
 
 STATIC_DIR = Path(__file__).parent / "static"
+mimetypes.add_type("image/webp", ".webp")  # the app icon; Python 3.11 does not know the type yet
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Runtime data lives in the working directory (start.bat runs from the app folder)
@@ -76,6 +78,7 @@ RECORDINGS_DIR = "recordings"
 MEETINGS_DIR = "meetings"
 ATTACHMENTS_DIR = os.path.join(RECORDINGS_DIR, "attachments")
 AUDIO_EXTENSIONS = (".mp3", ".wav")
+MAX_TITLE_LENGTH = 200  # the title field of the viewer has the same limit
 
 
 def _default_ai_act_mode() -> bool:
@@ -142,6 +145,10 @@ class VoiceNameRequest(BaseModel):
     label: str
     name: str
     consent: bool = False
+
+
+class TitleRequest(BaseModel):
+    title: str
 
 
 def api_error(status_code: int, key: str, **params) -> HTTPException:
@@ -621,6 +628,28 @@ def get_meeting(meeting_id: str):
         "markdown": markdown,
         "audio_url": f"/recordings/{audio_filename}" if audio_filename else None,
     }
+
+
+@app.patch("/api/meetings/{meeting_id}")
+def rename_meeting(meeting_id: str, req: TitleRequest):
+    """Changes the title of a meeting: in the list and in the first heading of the minutes."""
+    json_path, md_path = _meeting_paths(meeting_id)
+    if not os.path.exists(json_path) or not os.path.exists(md_path):
+        raise api_error(404, "api.meeting_not_found")
+    title = " ".join(req.title.split())
+    if not title or len(title) > MAX_TITLE_LENGTH:
+        raise api_error(400, "api.invalid_title")
+
+    with open(json_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    with open(md_path, encoding="utf-8") as f:
+        markdown = retitle_markdown(f.read(), title)
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(markdown)
+    meta["title"] = title
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    return {"success": True, "title": title, "markdown": markdown}
 
 
 @app.delete("/api/meetings/{meeting_id}")
