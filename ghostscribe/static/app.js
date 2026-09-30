@@ -8,11 +8,14 @@
     let currentConfiguredModel = "gemini-flash-latest";
     const API_KEY_MASK = "••••••••••••••••••••••••";
     let lastAutoLoadedMeetingId = null; // a freshly analyzed meeting is opened automatically only once
-    let aiActDefaultApplied = false;
+    let defaultAiActMode = true; // recording mode from the settings (EU AI Act compliant or with sentiment analysis)
     const DEVICE_STORAGE_KEYS = { mic: "ghostscribe_mic_device", loopback: "ghostscribe_loopback_device" };
     const TRANSCRIPT_STORAGE_KEY = "ghostscribe_transcript_language";
     let transcriptLanguage = localStorage.getItem(TRANSCRIPT_STORAGE_KEY) || "original";
     let transcriptHasTranslation = false;
+    let voiceRecognitionEnabled = false;
+    let voiceWorkers = 1; // parallel processes for the voice recognition, at most voiceWorkersMax
+    let voiceWorkersMax = 1;
     const TRASH_ICON = '<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>';
 
     // Creates an element; text is always set as textContent and never parsed as HTML
@@ -70,6 +73,7 @@
     const timerDisplay = document.getElementById("timerDisplay");
     const meetingTitleInput = document.getElementById("meetingTitleInput");
     const meetingParticipantsInput = document.getElementById("meetingParticipantsInput");
+    const participantsField = document.getElementById("participantsField");
     const meetingTypeSelect = document.getElementById("meetingTypeSelect");
     const cancelRecordBtn = document.getElementById("cancelRecordBtn");
     const recordToggleBtn = document.getElementById("recordToggleBtn");
@@ -77,6 +81,8 @@
     const pulseRing = document.getElementById("pulseRing");
     const processingBanner = document.getElementById("processingBanner");
     const processStepText = document.getElementById("processStepText");
+    const contentGrid = document.getElementById("contentGrid");
+    const meetingsToggle = document.getElementById("meetingsToggle");
     const meetingsList = document.getElementById("meetingsList");
     const meetingCount = document.getElementById("meetingCount");
     const searchInput = document.getElementById("searchInput");
@@ -88,10 +94,10 @@
     const copyMdBtn = document.getElementById("copyMdBtn");
     const downloadMdBtn = document.getElementById("downloadMdBtn");
     const deleteMeetingBtn = document.getElementById("deleteMeetingBtn");
+    const closeMeetingBtn = document.getElementById("closeMeetingBtn");
     const audioPlayerSection = document.getElementById("audioPlayerSection");
     const audioElement = document.getElementById("audioElement");
     const userSpeakerName = document.getElementById("userSpeakerName");
-    const settingsUserNameInput = document.getElementById("settingsUserNameInput");
 
     // Attachment & Chat Elements
     const attachmentsAccordion = document.getElementById("attachmentsAccordion");
@@ -113,38 +119,104 @@
     let attachedImages = []; // { id, filename, data, size }
     let toastTimer = null;
 
-    // Persist and synchronize user name with dynamic auto-resizing
+    // Own name in the minutes (next to the microphone), saved in the browser, with dynamic auto-resizing
     function adjustUserSpeakerInputWidth() {
-      if (!userSpeakerName) return;
       const text = userSpeakerName.value || userSpeakerName.placeholder;
       const dynamicWidth = Math.max(54, Math.min(220, text.length * 8.6 + 18));
       userSpeakerName.style.width = dynamicWidth + "px";
     }
 
-    function syncUserName(val) {
-      localStorage.setItem("ghostscribe_user_name", val);
-      if (userSpeakerName && userSpeakerName.value !== val) {
-        userSpeakerName.value = val;
-        adjustUserSpeakerInputWidth();
-      }
-      if (settingsUserNameInput && settingsUserNameInput.value !== val) {
-        settingsUserNameInput.value = val;
-      }
+    userSpeakerName.value = localStorage.getItem("ghostscribe_user_name") || "";
+    adjustUserSpeakerInputWidth();
+    userSpeakerName.addEventListener("input", () => {
+      adjustUserSpeakerInputWidth();
+      localStorage.setItem("ghostscribe_user_name", userSpeakerName.value);
+      renderParticipantChips(); // the own name has a color of its own
+    });
+
+    function ownName() {
+      return userSpeakerName.value.trim() || userSpeakerName.placeholder;
     }
 
-    const savedUserName = localStorage.getItem("ghostscribe_user_name") || "";
-    if (userSpeakerName) {
-      userSpeakerName.value = savedUserName;
-      adjustUserSpeakerInputWidth();
-      userSpeakerName.addEventListener("input", (e) => {
-        adjustUserSpeakerInputWidth();
-        syncUserName(e.target.value);
+    // Participants as colored chips: a comma or Enter turns the typed name into a chip. Every person keeps
+    // the chip color in the minutes (see colorSpeakers); the own name has a color of its own.
+    const SPEAKER_COLORS = 8;
+    let participantNames = [];
+
+    function splitNames(text) {
+      return (text || "").split(",").map(name => name.trim()).filter(Boolean);
+    }
+
+    // "Sarah (Lead Architect)" and "sarah" are the same person
+    function speakerKey(name) {
+      return name.replace(/\([^)]*\)/g, "").trim().toLowerCase();
+    }
+
+    function participantChip(name, index, selfKey) {
+      const color = speakerKey(name) === selfKey ? "speaker-self" : `speaker-${index % SPEAKER_COLORS}`;
+      return el("span", `participant-chip ${color}`, name);
+    }
+
+    function participantsValue() {
+      return [...participantNames, ...splitNames(meetingParticipantsInput.value)].join(", ");
+    }
+
+    function setParticipants(text) {
+      participantNames = [];
+      meetingParticipantsInput.value = "";
+      addParticipants(splitNames(text));
+      renderParticipantChips();
+    }
+
+    function addParticipants(names) {
+      const added = names.map(name => name.trim()).filter(name => name && !participantNames.some(known => speakerKey(known) === speakerKey(name)));
+      participantNames.push(...added);
+      if (added.length) renderParticipantChips();
+    }
+
+    function renderParticipantChips() {
+      const selfKey = speakerKey(ownName());
+      participantsField.querySelectorAll(".participant-chip").forEach(chip => chip.remove());
+      participantNames.forEach((name, index) => {
+        const chip = participantChip(name, index, selfKey);
+        const remove = el("button", "participant-chip-remove", "×");
+        remove.type = "button";
+        remove.title = t("console.remove_participant", { name });
+        remove.addEventListener("mousedown", (e) => e.preventDefault()); // keeps the focus (and typed text) in the input
+        remove.addEventListener("click", () => {
+          participantNames.splice(index, 1);
+          renderParticipantChips();
+        });
+        chip.append(remove);
+        meetingParticipantsInput.before(chip);
       });
+      participantsField.classList.toggle("has-chips", participantNames.length > 0);
     }
-    if (settingsUserNameInput) {
-      settingsUserNameInput.value = savedUserName;
-      settingsUserNameInput.addEventListener("input", (e) => syncUserName(e.target.value));
-    }
+
+    meetingParticipantsInput.addEventListener("input", () => {
+      const parts = meetingParticipantsInput.value.split(",");
+      if (parts.length < 2) return;
+      meetingParticipantsInput.value = parts.pop().trimStart();
+      addParticipants(parts);
+    });
+    meetingParticipantsInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addParticipants([meetingParticipantsInput.value]);
+        meetingParticipantsInput.value = "";
+      } else if (e.key === "Backspace" && !meetingParticipantsInput.value && participantNames.length) {
+        e.preventDefault();
+        meetingParticipantsInput.value = participantNames.pop(); // back into the field for editing
+        renderParticipantChips();
+      }
+    });
+    meetingParticipantsInput.addEventListener("blur", () => {
+      addParticipants([meetingParticipantsInput.value]);
+      meetingParticipantsInput.value = "";
+    });
+    participantsField.addEventListener("click", (e) => {
+      if (e.target === participantsField) meetingParticipantsInput.focus();
+    });
 
     // Modal Elements
     const settingsBtn = document.getElementById("settingsBtn");
@@ -165,65 +237,43 @@
       }, 1200);
     }
 
-    const apiKeyDot = document.getElementById("apiKeyDot");
+    const voiceRecognitionSelect = document.getElementById("voiceRecognitionSelect");
+    const voiceWorkersSelect = document.getElementById("voiceWorkersSelect");
+    const voiceProfilesList = document.getElementById("voiceProfilesList");
     const apiKeyHint = document.getElementById("apiKeyHint");
     const defaultAiActSelect = document.getElementById("defaultAiActSelect");
-
-    // EU AI Act Mode Elements
-    const aiActModeToggle = document.getElementById("aiActModeToggle");
-    const aiActToggleContainer = document.getElementById("aiActToggleContainer");
-    const aiActModeTitle = document.getElementById("aiActModeTitle");
-    const aiActModeDesc = document.getElementById("aiActModeDesc");
+    const modeHint = document.getElementById("modeHint");
+    const sentimentModeWarning = document.getElementById("sentimentModeWarning");
 
     // Sentiment Warning Confirmation Modal Elements
     const sentimentConfirmModal = document.getElementById("sentimentConfirmModal");
     const confirmSentimentBtn = document.getElementById("confirmSentimentBtn");
     const cancelSentimentBtn = document.getElementById("cancelSentimentBtn");
     const closeSentimentModalX = document.getElementById("closeSentimentModalX");
-    let pendingAiActSource = null;
 
-    function updateAiActToggleUI() {
-      if (!aiActModeToggle || !aiActToggleContainer) return;
-      const isAiAct = aiActModeToggle.checked;
-      if (isAiAct) {
-        aiActToggleContainer.classList.remove("mode-sentiment");
-        aiActModeTitle.textContent = t("aiact.title_on");
-        aiActModeDesc.textContent = t("aiact.desc_on");
-        aiActToggleContainer.title = t("aiact.toggle_title_on");
-      } else {
-        aiActToggleContainer.classList.add("mode-sentiment");
-        aiActModeTitle.textContent = t("aiact.title_off");
-        aiActModeDesc.textContent = t("aiact.desc_off");
-        aiActToggleContainer.title = t("aiact.toggle_title_off");
-      }
-    }
-
-    function openSentimentWarning(source = "toggle") {
-      pendingAiActSource = source;
-      if (sentimentConfirmModal) {
-        sentimentConfirmModal.classList.add("active");
-      }
+    // Choosing the sentiment mode in the settings needs a confirmation of the legal notice
+    function openSentimentWarning() {
+      sentimentConfirmModal.classList.add("active");
     }
 
     function closeSentimentWarning(confirmed = false) {
-      if (sentimentConfirmModal) {
-        sentimentConfirmModal.classList.remove("active");
-      }
-      if (confirmed) {
-        if (aiActModeToggle) aiActModeToggle.checked = false;
-        if (defaultAiActSelect) defaultAiActSelect.value = "false";
-        updateAiActToggleUI();
-      } else {
-        // Revert to true / safe compliant mode
-        if (pendingAiActSource === "toggle" || pendingAiActSource === null) {
-          if (aiActModeToggle) aiActModeToggle.checked = true;
-          updateAiActToggleUI();
-        } else if (pendingAiActSource === "settings") {
-          if (defaultAiActSelect) defaultAiActSelect.value = "true";
-        }
-      }
-      pendingAiActSource = null;
+      sentimentConfirmModal.classList.remove("active");
+      if (!confirmed) defaultAiActSelect.value = "true";
+      renderModeHint();
     }
+
+    // The hint below the analysis mode and the warning next to the status follow the mode
+    function renderModeHint() {
+      const sentiment = defaultAiActSelect.value === "false";
+      modeHint.textContent = t(sentiment ? "settings.mode_hint_sentiment" : "settings.mode_hint");
+      modeHint.classList.toggle("warning", sentiment);
+    }
+
+    function renderModeWarning() {
+      sentimentModeWarning.hidden = defaultAiActMode;
+    }
+
+    sentimentModeWarning.addEventListener("click", () => settingsBtn.click());
 
     if (confirmSentimentBtn) {
       confirmSentimentBtn.addEventListener("click", () => closeSentimentWarning(true));
@@ -240,44 +290,32 @@
       });
     }
 
-    // Toggle click interception with confirmation
-    if (aiActToggleContainer && aiActModeToggle) {
-      aiActToggleContainer.addEventListener("click", (e) => {
-        e.preventDefault();
-        if (aiActModeToggle.checked) {
-          // Trying to activate sentiment analysis -> require confirmation!
-          openSentimentWarning("toggle");
-        } else {
-          // Returning to compliant mode -> instant switch
-          aiActModeToggle.checked = true;
-          if (defaultAiActSelect) defaultAiActSelect.value = "true";
-          updateAiActToggleUI();
-        }
-      });
-    }
+    voiceRecognitionSelect.addEventListener("change", () => {
+      voiceWorkersSelect.disabled = voiceRecognitionSelect.value !== "true";
+    });
 
-    if (defaultAiActSelect) {
-      defaultAiActSelect.addEventListener("change", () => {
-        if (defaultAiActSelect.value === "false") {
-          openSentimentWarning("settings");
-        } else {
-          if (aiActModeToggle) aiActModeToggle.checked = true;
-          updateAiActToggleUI();
-        }
-      });
-    }
+    defaultAiActSelect.addEventListener("change", () => {
+      renderModeHint();
+      if (defaultAiActSelect.value === "false") openSentimentWarning();
+    });
 
     // Settings Modal handlers
     function renderApiKeyStatus() {
       welcomeBanner.style.display = hasApiKeyConfigured ? "none" : "block";
-      apiKeyDot.className = `status-dot-mini ${hasApiKeyConfigured ? "green" : "orange"}`;
-      apiKeyDot.title = t(hasApiKeyConfigured ? "settings.api_key_saved" : "settings.api_key_missing");
       apiKeyHint.innerHTML = DOMPurify.sanitize(t(hasApiKeyConfigured ? "settings.api_key_hint_saved" : "settings.api_key_hint_new"));
       apiKeyHint.style.color = hasApiKeyConfigured ? "var(--emerald)" : "var(--text-sub)";
     }
 
     function updateSettingsModalUI() {
-      defaultAiActSelect.value = aiActModeToggle.checked ? "true" : "false";
+      defaultAiActSelect.value = defaultAiActMode ? "true" : "false";
+      renderModeHint();
+      voiceRecognitionSelect.value = voiceRecognitionEnabled ? "true" : "false";
+      voiceWorkersSelect.replaceChildren(
+        ...Array.from({ length: voiceWorkersMax }, (_, i) => new Option(i18n.number(i + 1), String(i + 1)))
+      );
+      voiceWorkersSelect.value = String(voiceWorkers);
+      voiceWorkersSelect.disabled = !voiceRecognitionEnabled;
+      loadVoiceProfiles();
       syncModelSelect(currentConfiguredModel);
       renderApiKeyStatus();
       apiKeyInput.value = hasApiKeyConfigured ? API_KEY_MASK : "";
@@ -330,9 +368,11 @@
         return;
       }
 
-      const payload = { 
+      const payload = {
         model: model,
-        default_ai_act_mode: defaultAiActSelect ? defaultAiActSelect.value === "true" : true
+        default_ai_act_mode: defaultAiActSelect.value === "true",
+        voice_recognition: voiceRecognitionSelect.value === "true",
+        voice_workers: Number(voiceWorkersSelect.value)
       };
       if (!isMaskedOrEmpty) {
         payload.api_key = key;
@@ -353,12 +393,12 @@
             hasApiKeyConfigured = true;
           }
           currentConfiguredModel = model;
+          voiceRecognitionEnabled = payload.voice_recognition;
+          voiceWorkers = payload.voice_workers;
           syncModelSelect(model);
           if (welcomeBanner && hasApiKeyConfigured) welcomeBanner.style.display = "none";
-          if (defaultAiActSelect && aiActModeToggle) {
-            aiActModeToggle.checked = defaultAiActSelect.value === "true";
-            updateAiActToggleUI();
-          }
+          defaultAiActMode = payload.default_ai_act_mode;
+          renderModeWarning();
           settingsModal.classList.remove("active");
           showToast(t("toast.settings_saved"));
           pollStatus();
@@ -691,6 +731,7 @@
 
     // Global Strg+V Paste Handler for Screenshots, Files & Text
     window.addEventListener("paste", (e) => {
+      if (!contextRecording) return; // chat and slides are added after the recording
       const activeEl = document.activeElement;
       const isInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.isContentEditable);
       
@@ -747,7 +788,9 @@
     const selectedDevice = (select) => (select.value === "" ? null : Number(select.value));
 
     recordToggleBtn.addEventListener("click", async () => {
-      if (!isBusy()) {
+      if (contextRecording && !isBusy()) {
+        startAnalysis();
+      } else if (!isBusy()) {
         if (!hasApiKeyConfigured) {
           welcomeBanner.style.display = "block";
           settingsModal.classList.add("active");
@@ -755,10 +798,9 @@
           return;
         }
         const title = meetingTitleInput.value.trim();
-        const participants = meetingParticipantsInput.value.trim();
+        const participants = participantsValue();
         const meetingType = meetingTypeSelect.value;
-        const userName = userSpeakerName.value.trim() || userSpeakerName.placeholder;
-        const isAiAct = aiActModeToggle ? aiActModeToggle.checked : true;
+        const userName = ownName();
         try {
           const res = await fetch("/api/record/start", {
             method: "POST",
@@ -768,7 +810,7 @@
               participants: participants,
               meeting_type: meetingType,
               user_name: userName,
-              ai_act_mode: isAiAct,
+              ai_act_mode: defaultAiActMode,
               mic_device: selectedDevice(micSelect),
               loopback_device: selectedDevice(loopbackSelect)
             })
@@ -781,25 +823,9 @@
         }
       } else if (currentStatus === "recording") {
         try {
-          const chatText = (chatInput ? chatInput.value : "").trim();
-          const imagesPayload = attachedImages.map(img => ({
-            filename: img.filename,
-            data: img.data
-          }));
-          const isAiAct = aiActModeToggle ? aiActModeToggle.checked : true;
-          const res = await fetch("/api/record/stop", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_text: chatText,
-              images: imagesPayload,
-              ai_act_mode: isAiAct
-            })
-          });
+          const res = await fetch("/api/record/stop", { method: "POST" });
           if (!res.ok) {
             alert(t("alert.stop_failed", { message: errorText(await res.json().catch(() => ({}))) }));
-          } else {
-            clearAttachments();
           }
         } catch (e) {
           alert(t("alert.network_error", { message: e }));
@@ -874,8 +900,37 @@
       const modeBadge = el("span", `badge-tag ${isAiAct ? "ai-act" : "sentiment"}`, t(isAiAct ? "viewer.badge_ai_act" : "viewer.badge_sentiment"));
       modeBadge.title = t(isAiAct ? "viewer.badge_ai_act_title" : "viewer.badge_sentiment_title");
       const details = [t("viewer.meeting_on", { date: meetingDate(meta, { dateStyle: "long", timeStyle: "short" }) }), t("viewer.model", { model: meta.model_used })];
-      if (meta.participants) details.push(t("viewer.participants", { names: meta.participants }));
       viewMeta.replaceChildren(details.join(" • ") + " ", modeBadge);
+      const names = splitNames(meta.participants);
+      if (names.length) {
+        const selfKey = speakerKey(meta.user_name || "");
+        const row = el("div", "viewer-participants");
+        row.append(el("span", "", t("viewer.participants")), ...names.map((name, index) => participantChip(name, index, selfKey)));
+        viewMeta.append(row);
+      }
+    }
+
+    // Speaker names in the minutes get the colors of the participant chips. Further speakers of the transcript
+    // follow in the order they first speak; "Bernd" matches the participant "Bernd Müller" if the first name is unique.
+    function colorSpeakers(meta) {
+      const selfKey = speakerKey(meta.user_name || "");
+      const keys = splitNames(meta.participants).map(speakerKey);
+      const firstName = key => key.split(" ")[0];
+      const known = key => {
+        if (keys.includes(key)) return key;
+        const sameFirstName = keys.filter(other => firstName(other) === firstName(key));
+        return sameFirstName.length === 1 ? sameFirstName[0] : null;
+      };
+      const labels = [...markdownBody.querySelectorAll("strong")].map(strong => [strong, speakerKey(strong.textContent.replace(/:\s*$/, ""))]);
+      for (const [strong, key] of labels) {
+        const speaksInTranscript = /:\s*$/.test(strong.textContent) && /^\[\d{2}:\d{2}:\d{2}\]/.test(strong.parentElement.textContent.trim());
+        if (speaksInTranscript && key && key !== selfKey && !known(key)) keys.push(key);
+      }
+      for (const [strong, key] of labels) {
+        const person = key && key !== selfKey ? known(key) : null;
+        if (key && key === selfKey) strong.classList.add("speaker", "speaker-self");
+        else if (person) strong.classList.add("speaker", `speaker-${keys.indexOf(person) % SPEAKER_COLORS}`);
+      }
     }
 
     // Transcripts in languages other than German and English carry a German translation below each line
@@ -907,7 +962,41 @@
     function renderMarkdown() {
       markdownBody.innerHTML = DOMPurify.sanitize(marked.parse(visibleMarkdown()));
       if (transcriptHasTranslation) addTranscriptToggle();
+      if (activeMeetingMeta) colorSpeakers(activeMeetingMeta);
+      if (audioElement.getAttribute("src")) linkTimestamps();
     }
+
+    // [HH:MM:SS] in the minutes plays the recording from a few seconds before that moment
+    const TIMESTAMP = /\[(\d{2}):(\d{2}):(\d{2})\]/g;
+    const TIMESTAMP_LEAD_SECONDS = 1;
+
+    function linkTimestamps() {
+      const walker = document.createTreeWalker(markdownBody, NodeFilter.SHOW_TEXT);
+      const texts = [];
+      while (walker.nextNode()) texts.push(walker.currentNode);
+      for (const text of texts) {
+        const matches = [...text.nodeValue.matchAll(TIMESTAMP)];
+        if (!matches.length) continue;
+        const parts = [];
+        let end = 0;
+        for (const match of matches) {
+          const link = el("button", "timestamp-link", match[0]);
+          link.type = "button";
+          link.title = t("viewer.play_from", { seconds: TIMESTAMP_LEAD_SECONDS });
+          link.dataset.seconds = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+          parts.push(text.nodeValue.slice(end, match.index), link);
+          end = match.index + match[0].length;
+        }
+        text.replaceWith(...parts, text.nodeValue.slice(end));
+      }
+    }
+
+    markdownBody.addEventListener("click", (e) => {
+      const link = e.target.closest(".timestamp-link");
+      if (!link) return;
+      audioElement.currentTime = Math.max(0, Number(link.dataset.seconds) - TIMESTAMP_LEAD_SECONDS);
+      audioElement.play();
+    });
 
     function addTranscriptToggle() {
       const heading = [...markdownBody.querySelectorAll("h2")].find(h => /Transkript|Transcript/i.test(h.textContent));
@@ -930,6 +1019,115 @@
       applyViewerSearchHighlight(false);
     }
 
+    // Voices of the meeting (local voice recognition): recognized profiles and unknown voices to name
+    const voicesPanel = document.getElementById("voicesPanel");
+
+    function renderVoices(meta) {
+      const voices = meta.voices || [];
+      voicesPanel.hidden = voices.length === 0;
+      voicesPanel.replaceChildren(el("div", "voices-title", t("viewer.voices_title")), ...voices.map(voiceRow));
+    }
+
+    function voiceRow(voice) {
+      const status = voice.confirmed
+        ? t("viewer.voice_confirmed")
+        : voice.profile_id
+          ? t("viewer.voice_recognized", { percent: Math.round(voice.similarity * 100) })
+          : t("viewer.voice_unknown");
+      const info = el("div", "voice-info");
+      info.append(
+        el("strong", "voice-label", voice.label),
+        el("span", `voice-status${voice.profile_id ? " known" : ""}`, status),
+        el("span", "voice-time", t("viewer.voice_speaking_time", { time: formatTime(voice.seconds) }))
+      );
+
+      const play = el("button", "mini-action-btn", t("viewer.voice_play"));
+      play.type = "button";
+      play.addEventListener("click", () => {
+        audioElement.currentTime = voice.intervals[0][0];
+        audioElement.play();
+      });
+
+      const name = el("input", "form-input voice-name-input");
+      name.type = "text";
+      name.maxLength = 60;
+      name.placeholder = t("viewer.voice_name_placeholder");
+      if (voice.profile_id) name.value = voice.label;
+      const consent = el("input");
+      consent.type = "checkbox";
+      const consentLabel = el("label", "voice-consent");
+      consentLabel.append(consent, t("viewer.voice_consent"));
+      const save = el("button", "mini-action-btn", t("viewer.voice_save"));
+      save.type = "button";
+      save.addEventListener("click", () => saveVoice(voice.label, name.value.trim(), consent.checked));
+
+      const row = el("div", "voice-row");
+      const form = el("div", "voice-form");
+      form.append(name, consentLabel, save);
+      row.append(info, play, form);
+      return row;
+    }
+
+    async function saveVoice(label, name, consent) {
+      if (!consent) {
+        showToast(t("toast.voice_consent_missing"));
+        return;
+      }
+      try {
+        const res = await fetch(`/api/meetings/${encodeURIComponent(activeMeetingId)}/voices`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label, name, consent })
+        });
+        if (!res.ok) {
+          alert(t("alert.voice_save_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          return;
+        }
+        showToast(t("toast.voice_saved", { name }));
+        await loadMeeting(activeMeetingId);
+        fetchMeetings();
+      } catch (err) {
+        alert(t("alert.network_error", { message: err }));
+      }
+    }
+
+    // Saved voice profiles in the settings
+    async function loadVoiceProfiles() {
+      try {
+        const res = await fetch("/api/voices");
+        if (!res.ok) return;
+        const profiles = await res.json();
+        voiceProfilesList.replaceChildren(
+          ...(profiles.length ? profiles.map(profileItem) : [el("li", "voice-profiles-empty", t("settings.voice_profiles_empty"))])
+        );
+      } catch (err) {
+        console.error("Loading the voice profiles failed:", err);
+      }
+    }
+
+    function profileItem(profile) {
+      const remove = el("button", "mini-action-btn danger", "✕");
+      remove.type = "button";
+      remove.title = t("settings.voice_profile_delete");
+      remove.addEventListener("click", async () => {
+        if (!confirm(t("confirm.delete_voice", { name: profile.name }))) return;
+        const res = await fetch(`/api/voices/${encodeURIComponent(profile.id)}`, { method: "DELETE" });
+        if (res.ok) {
+          showToast(t("toast.voice_deleted"));
+          loadVoiceProfiles();
+        } else {
+          alert(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+        }
+      });
+      const item = el("li", "voice-profile");
+      item.append(
+        el("span", "voice-label", profile.name),
+        el("span", "voice-time", t("settings.voice_profile_meta", { time: formatTime(profile.seconds), count: profile.samples })),
+        remove
+      );
+      return item;
+    }
+
     // Load meeting details
     async function loadMeeting(id) {
       try {
@@ -945,120 +1143,71 @@
 
         viewTitle.innerText = meta.title || id;
         renderViewerMeta(meta);
-
-        renderMarkdown();
-        applyViewerSearchHighlight(true);
-        copyMdBtn.style.display = "flex";
-        downloadMdBtn.style.display = "flex";
-        deleteMeetingBtn.style.display = "flex";
+        renderVoices(meta);
+        contentGrid.classList.add("meeting-open");
 
         if (data.audio_url) {
           audioElement.src = data.audio_url;
           audioPlayerSection.style.display = "flex";
-          applyAudioMode(currentAudioMode);
         } else {
+          audioElement.removeAttribute("src");
           audioPlayerSection.style.display = "none";
         }
 
+        renderMarkdown();
+        applyViewerSearchHighlight(true);
         renderMeetingsList();
       } catch (err) {
         console.error("Loading the meeting failed:", err);
       }
     }
 
-    // Web Audio Channel Router (Mono / Stereo / Solo)
-    let audioCtx = null;
-    let sourceNode = null;
-    let splitter = null;
-    let merger = null;
-    let gainLL = null;
-    let gainLR = null;
-    let gainRL = null;
-    let gainRR = null;
-    let currentAudioMode = "mono"; // default: comfortable mono mix on both ears
+    // Audio player in the design of the page (the audio element itself has no visible controls)
+    const playPauseBtn = document.getElementById("playPauseBtn");
+    const playerSeek = document.getElementById("playerSeek");
+    const playerTime = document.getElementById("playerTime");
+    const playerDuration = document.getElementById("playerDuration");
+    const playerSpeed = document.getElementById("playerSpeed");
+    const playerMute = document.getElementById("playerMute");
+    const PLAYBACK_SPEEDS = [1, 1.25, 1.5, 2];
 
-    function initWebAudioRouter() {
-      if (audioCtx) return;
-      try {
-        audioCtx = new window.AudioContext();
-        sourceNode = audioCtx.createMediaElementSource(audioElement);
-        splitter = audioCtx.createChannelSplitter(2);
-        merger = audioCtx.createChannelMerger(2);
-
-        gainLL = audioCtx.createGain();
-        gainLR = audioCtx.createGain();
-        gainRL = audioCtx.createGain();
-        gainRR = audioCtx.createGain();
-
-        sourceNode.connect(splitter);
-
-        splitter.connect(gainLL, 0);
-        splitter.connect(gainLR, 0);
-        splitter.connect(gainRL, 1);
-        splitter.connect(gainRR, 1);
-
-        gainLL.connect(merger, 0, 0);
-        gainRL.connect(merger, 0, 0);
-        gainLR.connect(merger, 0, 1);
-        gainRR.connect(merger, 0, 1);
-
-        merger.connect(audioCtx.destination);
-        applyAudioMode(currentAudioMode);
-      } catch (err) {
-        console.warn("Web Audio router could not be initialized:", err);
-      }
+    function renderPlayer() {
+      const duration = Number.isFinite(audioElement.duration) ? audioElement.duration : 0;
+      const progress = duration ? audioElement.currentTime / duration : 0;
+      playerSeek.value = Math.round(progress * 1000);
+      playerSeek.style.setProperty("--progress", `${progress * 100}%`);
+      playerTime.textContent = formatTime(audioElement.currentTime);
+      playerDuration.textContent = formatTime(duration);
+      playPauseBtn.classList.toggle("playing", !audioElement.paused);
+      playerMute.classList.toggle("muted", audioElement.muted);
+      playerSpeed.textContent = `${i18n.number(audioElement.playbackRate)}×`;
     }
 
-    function applyAudioMode(mode) {
-      currentAudioMode = mode;
-      if (!audioCtx || !gainLL) return;
-      if (audioCtx.state === "suspended") {
-        audioCtx.resume();
-      }
-
-      if (mode === "mono") {
-        // Both tracks (me + Teams) centered on both ears
-        gainLL.gain.value = 0.8;
-        gainLR.gain.value = 0.8;
-        gainRL.gain.value = 0.8;
-        gainRR.gain.value = 0.8;
-      } else if (mode === "stereo") {
-        // Original: left = me, right = Teams
-        gainLL.gain.value = 1.0;
-        gainLR.gain.value = 0.0;
-        gainRL.gain.value = 0.0;
-        gainRR.gain.value = 1.0;
-      } else if (mode === "right") {
-        // Only Teams / other participants on both ears
-        gainLL.gain.value = 0.0;
-        gainLR.gain.value = 0.0;
-        gainRL.gain.value = 1.0;
-        gainRR.gain.value = 1.0;
-      } else if (mode === "left") {
-        // Only my own microphone on both ears
-        gainLL.gain.value = 1.0;
-        gainLR.gain.value = 1.0;
-        gainRL.gain.value = 0.0;
-        gainRR.gain.value = 0.0;
-      }
-
-      document.querySelectorAll(".audio-mode-btn").forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.mode === mode);
-      });
-    }
-
-    audioElement.addEventListener("play", () => {
-      initWebAudioRouter();
-      if (audioCtx && audioCtx.state === "suspended") {
-        audioCtx.resume();
-      }
+    ["timeupdate", "durationchange", "loadedmetadata", "play", "pause", "ended", "emptied", "ratechange", "volumechange"]
+      .forEach(event => audioElement.addEventListener(event, renderPlayer));
+    playPauseBtn.addEventListener("click", () => (audioElement.paused ? audioElement.play() : audioElement.pause()));
+    playerSeek.addEventListener("input", () => {
+      if (audioElement.duration) audioElement.currentTime = (playerSeek.value / 1000) * audioElement.duration;
+    });
+    playerSpeed.addEventListener("click", () => {
+      const next = PLAYBACK_SPEEDS[(PLAYBACK_SPEEDS.indexOf(audioElement.playbackRate) + 1) % PLAYBACK_SPEEDS.length];
+      audioElement.defaultPlaybackRate = audioElement.playbackRate = next; // kept when the next meeting is opened
+    });
+    playerMute.addEventListener("click", () => {
+      audioElement.muted = !audioElement.muted;
     });
 
-    document.querySelectorAll(".audio-mode-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        initWebAudioRouter();
-        applyAudioMode(btn.dataset.mode);
-      });
+    // Recordings are mono MP3s with (L + R) / 2, older ones stereo (left: microphone, right: system audio).
+    // The gain node plays both on both ears: 1.6 x (L + R) / 2 keeps the loudness of a single speaker.
+    let audioContext = null;
+
+    audioElement.addEventListener("play", () => {
+      if (!audioContext) {
+        audioContext = new AudioContext();
+        const mono = new GainNode(audioContext, { gain: 1.6, channelCount: 1, channelCountMode: "explicit" });
+        audioContext.createMediaElementSource(audioElement).connect(mono).connect(audioContext.destination);
+      }
+      if (audioContext.state === "suspended") audioContext.resume();
     });
 
     // Delete Meeting button handler
@@ -1077,7 +1226,7 @@
         const res = await fetch(`/api/meetings/${encodeURIComponent(id)}`, { method: "DELETE" });
         if (res.ok) {
           if (activeMeetingId === id) {
-            resetViewer();
+            closeMeeting();
           }
           await fetchMeetings();
         } else {
@@ -1088,28 +1237,22 @@
       }
     }
 
-    function resetViewer() {
+    // Closes the minutes; the meetings list takes the full width again
+    function closeMeeting() {
       activeMeetingId = null;
       activeMeetingMeta = null;
       rawCurrentMarkdown = "";
-      if (searchMatchBadge) searchMatchBadge.style.display = "none";
-      viewTitle.innerText = t("viewer.no_selection");
-      viewMeta.innerText = "-";
-      markdownBody.innerHTML = `
-        <div class="empty-state">
-          <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <p data-i18n-html="viewer.empty"></p>
-        </div>
-      `;
-      i18n.apply(markdownBody);
-      copyMdBtn.style.display = "none";
-      downloadMdBtn.style.display = "none";
-      deleteMeetingBtn.style.display = "none";
-      audioPlayerSection.style.display = "none";
       audioElement.src = "";
+      contentGrid.classList.remove("meeting-open");
+      renderMeetingsList();
     }
+
+    closeMeetingBtn.addEventListener("click", closeMeeting);
+
+    // The saved meetings start collapsed and open with a click on their heading
+    meetingsToggle.addEventListener("click", () => {
+      meetingsToggle.setAttribute("aria-expanded", String(contentGrid.classList.toggle("list-open")));
+    });
 
     let cachedMeetings = [];
     async function fetchMeetings() {
@@ -1130,7 +1273,6 @@
     function applyUrlParams() {
       const params = new URLSearchParams(window.location.search);
       if (params.get("meeting")) loadMeeting(params.get("meeting"));
-      if (params.get("open_drawer") === "1") openAttachmentsAccordion();
       if (params.get("open_settings") === "1") settingsModal.classList.add("active");
       if (params.get("scroll") === "protocol") {
         setTimeout(() => markdownBody.scrollIntoView({ behavior: "instant", block: "start" }), 600);
@@ -1148,6 +1290,7 @@
     }
 
     function renderUnprocessed(recordings) {
+      unprocessedRecordings = recordings;
       unprocessedList.replaceChildren(...recordings.map(rec => {
         const item = el("div", "unprocessed-item");
         const info = el("div", "unprocessed-info");
@@ -1166,24 +1309,96 @@
       unprocessedSection.hidden = isBusy() || recordings.length === 0;
     }
 
-    async function analyzeRecording(filename) {
+    // After a recording (or for one from the list): add chat history and slides, then start the analysis
+    const contextHint = document.getElementById("contextHint");
+    const laterBtn = document.getElementById("laterBtn");
+    let contextRecording = null; // file name of the recording whose context step is open
+    let dismissedPending = null; // a just-saved recording that was put aside with "Later"
+    let unprocessedRecordings = [];
+
+    function showContextStep(recording) {
+      contextRecording = recording.filename;
+      if (recording.title !== undefined) meetingTitleInput.value = recording.title;
+      if (recording.participants !== undefined) setParticipants(recording.participants);
+      if (recording.meeting_type) meetingTypeSelect.value = recording.meeting_type;
+      if (recording.chat_text) chatInput.value = recording.chat_text;
+      updateChatStats();
+      updateAttachmentsBadge();
+      contextHint.hidden = false;
+      attachmentsAccordion.hidden = false;
+      laterBtn.hidden = false;
+      openAttachmentsAccordion();
+      recordToggleBtn.classList.add("analyze");
+      recordBtnText.innerText = t("record.analyze");
+    }
+
+    function endContextStep() {
+      dismissedPending = contextRecording;
+      contextRecording = null;
+      contextHint.hidden = true;
+      attachmentsAccordion.hidden = true;
+      laterBtn.hidden = true;
+      clearAttachments();
+      recordToggleBtn.classList.remove("analyze");
+      recordBtnText.innerText = t("record.start");
+    }
+
+    function contextPayload() {
+      return {
+        title: meetingTitleInput.value.trim(),
+        participants: participantsValue(),
+        meeting_type: meetingTypeSelect.value,
+        chat_text: chatInput.value.trim(),
+        images: attachedImages.map(img => ({ filename: img.filename, data: img.data }))
+      };
+    }
+
+    async function startAnalysis() {
       if (!hasApiKeyConfigured) {
         settingsModal.classList.add("active");
         return;
       }
       try {
-        const res = await fetch(`/api/recordings/${encodeURIComponent(filename)}/analyze`, {
+        const res = await fetch(`/api/recordings/${encodeURIComponent(contextRecording)}/analyze`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ai_act_mode: aiActModeToggle.checked, user_name: userSpeakerName.value.trim() })
+          body: JSON.stringify({ ai_act_mode: defaultAiActMode, user_name: userSpeakerName.value.trim(), ...contextPayload() })
         });
         if (!res.ok) {
           alert(t("alert.analyze_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          return;
         }
+        endContextStep();
         pollStatus();
       } catch (err) {
         alert(t("alert.network_error", { message: err }));
       }
+    }
+
+    laterBtn.addEventListener("click", async () => {
+      try {
+        const res = await fetch(`/api/recordings/${encodeURIComponent(contextRecording)}/context`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(contextPayload())
+        });
+        if (!res.ok) {
+          alert(t("alert.context_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+          return;
+        }
+        endContextStep();
+        showToast(t("toast.recording_kept"));
+        fetchUnprocessed();
+      } catch (err) {
+        alert(t("alert.network_error", { message: err }));
+      }
+    });
+
+    // "Analyze" in the list of recordings without minutes opens the same step for that recording
+    function analyzeRecording(filename) {
+      clearAttachments();
+      showContextStep(unprocessedRecordings.find(r => r.filename === filename) || { filename });
+      document.querySelector(".console-card").scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     async function deleteRecording(filename) {
@@ -1204,11 +1419,19 @@
     // Audio devices: "" = Windows default, otherwise the device index
     const deviceLabel = (name) => name.replace(" [Loopback]", "");
 
+    // Replaces only the options: the <button> in front of them shows the (truncated) selection
+    function setDeviceOptions(select, options) {
+      select.options.length = 0;
+      options.forEach(option => select.add(option));
+    }
+
     function fillDeviceSelect(select, devices, storageKey) {
       const saved = localStorage.getItem(storageKey) || "";
       const defaultDevice = devices.find(d => d.default);
-      select.replaceChildren(new Option(defaultDevice ? t("devices.default", { name: deviceLabel(defaultDevice.name) }) : t("devices.windows_default"), ""));
-      devices.filter(d => !d.default).forEach(d => select.add(new Option(deviceLabel(d.name), String(d.index))));
+      setDeviceOptions(select, [
+        new Option(defaultDevice ? t("devices.default", { name: deviceLabel(defaultDevice.name) }) : t("devices.windows_default"), ""),
+        ...devices.filter(d => !d.default).map(d => new Option(deviceLabel(d.name), String(d.index))),
+      ]);
       select.value = devices.some(d => !d.default && String(d.index) === saved) ? saved : "";
     }
 
@@ -1230,7 +1453,7 @@
       [[micSelect, micDevice], [loopbackSelect, loopbackDevice]].forEach(([select, name]) => {
         select.disabled = true;
         if (name && (select.options.length !== 1 || select.options[0].textContent !== deviceLabel(name))) {
-          select.replaceChildren(new Option(deviceLabel(name), ""));
+          setDeviceOptions(select, [new Option(deviceLabel(name), "")]);
         }
       });
     }
@@ -1433,11 +1656,8 @@
           if (data.status === "error") {
             errorBanner.textContent = `⚠️ ${data.last_error || t("error.unknown")}`;
           }
-          if (!aiActDefaultApplied) {
-            aiActDefaultApplied = true;
-            aiActModeToggle.checked = data.status === "recording" ? data.ai_act_mode : data.default_ai_act_mode;
-            updateAiActToggleUI();
-          }
+          defaultAiActMode = data.default_ai_act_mode;
+          renderModeWarning();
 
           // VU meters
           micVuFill.style.width = Math.min(100, Math.round(data.mic_level * 100 * 1.5)) + "%";
@@ -1470,8 +1690,8 @@
             if (data.current_title && !meetingTitleInput.value) {
               meetingTitleInput.value = data.current_title;
             }
-            if (data.current_participants && !meetingParticipantsInput.value) {
-              meetingParticipantsInput.value = data.current_participants;
+            if (data.current_participants && !participantsValue()) {
+              setParticipants(data.current_participants);
             }
             if (data.current_meeting_type) {
               meetingTypeSelect.value = data.current_meeting_type;
@@ -1494,8 +1714,8 @@
             statusBadge.className = hasError || !data.has_api_key ? "status-badge warning" : "status-badge";
             statusText.innerText = t(hasError ? "status.error" : data.has_api_key ? "status.ready" : "status.no_api_key");
             recordToggleBtn.disabled = false;
-            recordToggleBtn.className = "record-btn start";
-            recordBtnText.innerText = t("record.start");
+            recordToggleBtn.className = contextRecording ? "record-btn start analyze" : "record-btn start";
+            recordBtnText.innerText = t(contextRecording ? "record.analyze" : "record.start");
             cancelRecordBtn.style.display = "none";
             pulseRing.style.display = "none";
             processingBanner.style.display = "none";
@@ -1506,6 +1726,10 @@
               timerDisplay.innerText = "00:00:00";
             }
 
+            if (data.pending_recording && data.pending_recording !== dismissedPending && !contextRecording) {
+              showContextStep({ filename: data.pending_recording });
+            }
+
             // Open a freshly analyzed meeting once (afterwards the user's selection is kept)
             if (data.last_meeting_id && data.last_meeting_id !== lastAutoLoadedMeetingId) {
               lastAutoLoadedMeetingId = data.last_meeting_id;
@@ -1513,6 +1737,9 @@
             }
           }
 
+          voiceRecognitionEnabled = data.voice_recognition;
+          voiceWorkers = data.voice_workers;
+          voiceWorkersMax = data.voice_workers_max;
           if (data.model) {
             currentConfiguredModel = data.model;
             if (!settingsModal.classList.contains("active")) {
@@ -1559,7 +1786,7 @@
     // Content the script renders itself instead of using data-i18n attributes (again after a language change)
     function renderTranslatedContent() {
       adjustUserSpeakerInputWidth();
-      updateAiActToggleUI();
+      renderModeHint();
       updateChatStats();
       renderThumbnails();
       renderApiKeyStatus();
@@ -1567,10 +1794,9 @@
       loadDevices();
       if (activeMeetingMeta) {
         renderViewerMeta(activeMeetingMeta);
+        renderVoices(activeMeetingMeta);
         renderMarkdown();
         applyViewerSearchHighlight(false);
-      } else {
-        resetViewer();
       }
     }
 

@@ -12,6 +12,11 @@ def test_requests_via_foreign_host_names_are_rejected(client):
     assert client.get("/api/status", headers={"Host": "evil.example:8765"}).status_code == 403
 
 
+def test_the_web_interface_is_always_revalidated(client):
+    for path in ("/", "/static/app.js"):
+        assert client.get(path).headers["cache-control"] == "no-cache"
+
+
 def test_requests_from_the_local_ui_are_allowed(client):
     response = client.get("/api/status", headers={"Origin": "http://localhost:8765"})
 

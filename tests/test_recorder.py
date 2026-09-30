@@ -1,6 +1,8 @@
+import shutil
 import wave
 
 import numpy as np
+import pytest
 
 from ghostscribe.recorder import MeetingRecorder, resample_to_mono
 
@@ -53,3 +55,22 @@ def test_save_pads_both_channels_to_the_recording_duration(tmp_path):
 
     with wave.open(path, "rb") as wf:
         assert (wf.getnchannels(), wf.getframerate(), wf.getnframes()) == (2, SR_OUT, 2 * SR_OUT)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is optional")
+def test_mp3_copy_is_mono_because_gemini_mixes_the_channels_down_anyway(tmp_path):
+    wav = tmp_path / "meeting.wav"
+    with wave.open(str(wav), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(SR_OUT)
+        wf.writeframes(tone(1000, channels=2).tobytes())
+
+    mp3 = MeetingRecorder.compress_to_mp3(str(wav))
+
+    with open(mp3, "rb") as f:
+        data = f.read()
+    if data[:3] == b"ID3":  # skip the ID3v2 tag: 10-byte header, size as four 7-bit bytes
+        data = data[10 + sum(byte << (7 * (3 - i)) for i, byte in enumerate(data[6:10])) :]
+    assert data[0] == 0xFF and data[1] & 0xE0 == 0xE0  # MPEG audio frame header
+    assert data[3] >> 6 == 3  # channel mode: mono

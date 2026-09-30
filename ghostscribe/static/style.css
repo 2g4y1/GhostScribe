@@ -55,6 +55,8 @@
       --rose: #f43f5e;
       --rose-glow: rgba(244, 63, 94, 0.45);
       --amber: #f59e0b;
+
+      color-scheme: dark; /* native parts (lists, scrollbars, checkboxes) follow the dark design */
     }
 
     [hidden] {
@@ -87,13 +89,17 @@
       flex-direction: column;
     }
 
-    /* Scrollbar */
+    /* Scrollbars: thin and without a visible track, so nothing sticks out of the rounded cards */
     ::-webkit-scrollbar {
       width: 6px;
       height: 6px;
     }
     ::-webkit-scrollbar-track {
-      background: rgba(0,0,0,0.2);
+      background: transparent;
+    }
+    .viewer-card::-webkit-scrollbar-track,
+    .modal-card::-webkit-scrollbar-track {
+      margin: 18px 0; /* keeps the thumb clear of the rounded corners */
     }
     ::-webkit-scrollbar-thumb {
       background: rgba(255,255,255,0.15);
@@ -101,6 +107,12 @@
     }
     ::-webkit-scrollbar-thumb:hover {
       background: rgba(255,255,255,0.3);
+    }
+    @supports not selector(::-webkit-scrollbar) {
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+      }
     }
 
     /* Header */
@@ -180,6 +192,22 @@
       border: 1px solid rgba(16, 185, 129, 0.3);
       color: var(--emerald);
       transition: all 0.3s ease;
+    }
+
+    /* Sentiment analysis on: warning triangle inside the status pill */
+    .mode-warning {
+      display: inline-flex;
+      align-items: center;
+      padding: 0;
+      border: none;
+      background: none;
+      color: var(--amber);
+      cursor: pointer;
+      transition: color 0.2s ease;
+    }
+
+    .mode-warning:hover {
+      color: #fcd34d;
     }
 
     .status-badge.recording {
@@ -363,11 +391,6 @@
       cursor: default;
     }
 
-    .device-select option {
-      background: #0f172a;
-      color: #f8fafc;
-    }
-
     /* VU Meter */
     .vu-meter {
       height: 8px;
@@ -461,6 +484,7 @@
     .meta-inputs-grid {
       display: grid;
       grid-template-columns: 1.4fr 1fr;
+      align-items: start; /* many chips make the participants field taller, not the select next to it */
       gap: 0.75rem;
       width: 100%;
       margin-top: 0.6rem;
@@ -479,64 +503,99 @@
       transition: all 0.2s ease;
     }
 
-    .sub-input:focus {
+    .sub-input:focus,
+    .participants-field:focus-within {
       border-color: var(--primary);
       box-shadow: 0 0 10px var(--primary-glow);
     }
 
-    /* EU AI Act Mode Switch Bar */
-    .ai-act-banner-row {
-      width: 100%;
-      margin-top: 0.75rem;
-    }
-
-    .ai-act-toggle {
+    /* Participants as chips; every person keeps the chip color in the minutes */
+    .participants-field {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      gap: 0.85rem;
-      background: rgba(16, 185, 129, 0.08);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      padding: 0.65rem 1rem;
-      border-radius: 12px;
+      gap: 0.35rem;
+      padding: 0.5rem 0.75rem;
+      cursor: text;
+    }
+
+    .participants-input {
+      flex: 1;
+      min-width: 5rem;
+      padding: 0.2rem 0.25rem;
+      border: none;
+      background: none;
+      outline: none;
+      color: inherit;
+      font: inherit;
+    }
+
+    .participants-field.has-chips .participants-input::placeholder {
+      color: transparent;
+    }
+
+    .participant-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      padding: 0.15rem 0.55rem;
+      border: 1px solid color-mix(in srgb, var(--speaker) 40%, transparent);
+      border-radius: 9999px;
+      background: color-mix(in srgb, var(--speaker) 14%, transparent);
+      color: var(--speaker);
+      font-size: 0.8rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .participant-chip-remove {
+      padding: 0 0 0 0.1rem;
+      border: none;
+      background: none;
+      color: inherit;
+      font-size: 0.95rem;
+      line-height: 1;
+      opacity: 0.6;
       cursor: pointer;
-      user-select: none;
-      transition: all 0.25s ease;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
     }
 
-    .ai-act-toggle:hover {
-      background: rgba(16, 185, 129, 0.12);
-      border-color: rgba(16, 185, 129, 0.5);
+    .participant-chip-remove:hover {
+      opacity: 1;
     }
 
-    .ai-act-toggle.mode-sentiment {
-      background: rgba(239, 68, 68, 0.14) !important;
-      border: 1px solid rgba(239, 68, 68, 0.45) !important;
-      box-shadow: 0 0 16px rgba(239, 68, 68, 0.18), inset 0 0 12px rgba(239, 68, 68, 0.06) !important;
+    .participants-field:has(.participants-input:disabled) {
+      cursor: default;
     }
 
-    .ai-act-toggle.mode-sentiment:hover {
-      background: rgba(239, 68, 68, 0.2) !important;
-      border-color: rgba(239, 68, 68, 0.65) !important;
-      box-shadow: 0 0 22px rgba(239, 68, 68, 0.28) !important;
+    .participants-field:has(.participants-input:disabled) .participant-chip-remove {
+      display: none; /* fixed while recording */
     }
 
-    .ai-act-toggle.mode-sentiment .ai-act-title {
-      color: #fca5a5 !important;
+    .speaker-0 { --speaker: #a78bfa; }
+    .speaker-1 { --speaker: #34d399; }
+    .speaker-2 { --speaker: #fbbf24; }
+    .speaker-3 { --speaker: #f472b6; }
+    .speaker-4 { --speaker: #22d3ee; }
+    .speaker-5 { --speaker: #fb923c; }
+    .speaker-6 { --speaker: #a3e635; }
+    .speaker-7 { --speaker: #fde047; }
+    .speaker-self { --speaker: #93c5fd; } /* like the own name next to the microphone */
+
+    .markdown-body strong.speaker {
+      color: var(--speaker);
     }
 
-    .ai-act-toggle.mode-sentiment .ai-act-desc {
-      color: #fecaca !important;
+    .timestamp-link {
+      padding: 0;
+      border: none;
+      background: none;
+      color: var(--cyan);
+      font: inherit;
+      cursor: pointer;
     }
 
-    .ai-act-toggle.mode-sentiment .ai-act-switch {
-      background: rgba(239, 68, 68, 0.35) !important;
-      border: 1px solid rgba(239, 68, 68, 0.6) !important;
-    }
-
-    .ai-act-toggle.mode-sentiment .ai-act-switch::after {
-      background: #f87171 !important;
-      box-shadow: 0 0 8px rgba(239, 68, 68, 0.8) !important;
+    .timestamp-link:hover {
+      text-decoration: underline;
     }
 
     .modal-card.sentiment-warning-card {
@@ -588,62 +647,6 @@
     .warning-note {
       color: var(--text-sub);
       font-size: 0.8rem;
-    }
-
-    .ai-act-toggle input {
-      display: none;
-    }
-
-    .ai-act-switch {
-      position: relative;
-      width: 38px;
-      height: 22px;
-      background: rgba(255, 255, 255, 0.15);
-      border-radius: 9999px;
-      flex-shrink: 0;
-      transition: background 0.25s ease;
-    }
-
-    .ai-act-switch::after {
-      content: "";
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 18px;
-      height: 18px;
-      background: #fff;
-      border-radius: 50%;
-      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-    }
-
-    .ai-act-toggle input:checked + .ai-act-switch {
-      background: var(--emerald, #10b981);
-    }
-
-    .ai-act-toggle input:checked + .ai-act-switch::after {
-      transform: translateX(16px);
-    }
-
-    .ai-act-info {
-      display: flex;
-      flex-direction: column;
-      text-align: left;
-    }
-
-    .ai-act-title {
-      font-size: 0.84rem;
-      font-weight: 700;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-    }
-
-    .ai-act-desc {
-      font-size: 0.72rem;
-      color: var(--text-sub);
-      margin-top: 1px;
     }
 
     /* Badges for Protocol Header */
@@ -1273,12 +1276,20 @@
       to { transform: rotate(360deg); }
     }
 
-    /* Content Area: Grid */
+    /* Content Area: the meetings list alone, next to the minutes once a meeting is open */
     .content-grid {
       display: grid;
-      grid-template-columns: 340px 1fr;
+      grid-template-columns: minmax(0, 1fr);
       gap: 1.5rem;
-      min-height: 500px;
+    }
+
+    .content-grid.meeting-open.list-open {
+      grid-template-columns: 340px minmax(0, 1fr);
+    }
+
+    .content-grid:not(.list-open) .meetings-body,
+    .content-grid:not(.meeting-open) .viewer-card {
+      display: none;
     }
 
     /* Meetings List Sidebar */
@@ -1294,12 +1305,38 @@
     }
 
     .sidebar-header {
+      width: 100%;
+      padding: 0;
+      border: none;
+      background: none;
+      font-family: inherit;
       font-size: 1rem;
       font-weight: 700;
       color: var(--text-main);
       display: flex;
       justify-content: space-between;
       align-items: center;
+      cursor: pointer;
+    }
+
+    .sidebar-chevron {
+      color: var(--text-muted);
+      transition: transform 0.2s ease, color 0.2s ease;
+    }
+
+    .sidebar-header:hover .sidebar-chevron {
+      color: var(--text-main);
+    }
+
+    .content-grid.list-open .sidebar-chevron {
+      transform: rotate(180deg);
+    }
+
+    .meetings-body {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      min-height: 0; /* the list scrolls inside the card */
     }
 
     .meetings-list {
@@ -1308,6 +1345,12 @@
       gap: 0.6rem;
       overflow-y: auto;
       padding-right: 0.3rem;
+    }
+
+    /* Without an open meeting the list uses the full width */
+    .content-grid:not(.meeting-open) .meetings-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     }
 
     .meeting-item {
@@ -1491,6 +1534,14 @@
       margin-top: 4px;
     }
 
+    .viewer-participants {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.5rem;
+    }
+
     .viewer-tools {
       display: flex;
       gap: 0.5rem;
@@ -1498,6 +1549,28 @@
       flex-wrap: nowrap;
       flex-shrink: 0;
     }
+    .viewer-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px; /* as high as the buttons next to it */
+      padding: 0;
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .viewer-close:hover {
+      color: var(--text-main);
+      border-color: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
     .viewer-tools .btn-secondary {
       min-width: 90px;
       height: 32px;
@@ -1549,58 +1622,91 @@
     }
 
     /* Audio Player */
-    .audio-player-wrapper {
+    .audio-player {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      padding: 0.75rem 1rem;
       background: rgba(0, 0, 0, 0.35);
-      padding: 0.85rem 1.25rem;
-      border-radius: 14px;
       border: 1px solid var(--border-card);
-      display: flex;
-      flex-direction: column;
-      gap: 0.65rem;
+      border-radius: 14px;
     }
 
-    .audio-player-row {
+    .player-play {
       display: flex;
       align-items: center;
-      gap: 1rem;
-      width: 100%;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 42px;
+      height: 42px;
+      border: none;
+      border-radius: 50%;
+      color: #fff;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--primary), var(--cyan));
+      box-shadow: 0 0 14px var(--primary-glow);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
 
-    .audio-label {
-      font-size: 0.85rem;
-      font-weight: 600;
-      white-space: nowrap;
+    .player-play:hover {
+      transform: scale(1.06);
+      box-shadow: 0 0 20px var(--cyan-glow);
     }
 
-    audio {
-      width: 100%;
-      height: 36px;
-      filter: invert(0.9) hue-rotate(180deg);
+    .player-play .icon-pause,
+    .player-play.playing .icon-play,
+    .player-mute .icon-muted,
+    .player-mute.muted .icon-volume {
+      display: none;
     }
 
-    .audio-mode-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      padding-top: 0.5rem;
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    .player-play.playing .icon-pause,
+    .player-mute.muted .icon-muted {
+      display: block;
     }
 
-    .audio-mode-label {
-      font-size: 0.74rem;
-      color: var(--text-sub);
-      font-weight: 600;
+    .player-time {
+      flex-shrink: 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--text-muted);
     }
 
-    .audio-mode-pills {
-      display: flex;
-      gap: 0.35rem;
-      flex-wrap: wrap;
+    .player-seek {
+      flex: 1;
+      min-width: 0;
+      height: 6px;
+      border-radius: 9999px;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background: linear-gradient(90deg, var(--primary), var(--cyan)) 0 / var(--progress, 0%) 100% no-repeat,
+        rgba(255, 255, 255, 0.1);
     }
 
-    .audio-mode-btn,
+    .player-seek::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 8px var(--cyan-glow);
+    }
+
+    .player-seek::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border: none;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .player-speed {
+      min-width: 3.2rem;
+      justify-content: center;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
     .transcript-toggle-btn {
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1617,14 +1723,12 @@
       gap: 0.3rem;
     }
 
-    .audio-mode-btn:hover,
     .transcript-toggle-btn:hover {
       background: rgba(255, 255, 255, 0.08);
       color: #ffffff;
       border-color: rgba(255, 255, 255, 0.15);
     }
 
-    .audio-mode-btn.active,
     .transcript-toggle-btn.active {
       background: rgba(99, 102, 241, 0.2);
       border-color: var(--primary);
@@ -1655,6 +1759,120 @@
       color: #93c5fd;
       margin-top: 1.75rem;
       margin-bottom: 0.75rem;
+    }
+
+    /* After a recording the main button starts the analysis */
+    .record-btn .icon-analyze,
+    .record-btn.analyze .icon-record {
+      display: none;
+    }
+
+    .record-btn.analyze .icon-analyze {
+      display: inline;
+    }
+
+    /* Hint above chat and slides after a recording */
+    .context-hint {
+      font-size: 0.85rem;
+      color: var(--emerald);
+      text-align: center;
+      max-width: 680px;
+      margin-bottom: 0.75rem;
+    }
+
+    /* Voices of a meeting (local voice recognition) */
+    .voices-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-top: 1rem;
+      padding: 0.85rem 1.25rem;
+      border: 1px solid var(--border-card);
+      border-radius: 14px;
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .voices-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .voice-row,
+    .voice-profile {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.75rem;
+    }
+
+    .voice-info {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      flex: 1 1 220px;
+      min-width: 0;
+    }
+
+    .voice-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .voice-status,
+    .voice-time,
+    .voice-consent,
+    .voice-profiles-empty {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .voice-status.known {
+      color: var(--emerald);
+    }
+
+    .voice-form {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .voice-name-input {
+      width: 11rem;
+      padding: 0.3rem 0.6rem;
+      font-size: 0.8rem;
+    }
+
+    .voice-consent {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      cursor: pointer;
+    }
+
+    .voice-profiles {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin-top: 0.5rem;
+    }
+
+    .voice-profiles-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .voice-profiles-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      list-style: none;
+    }
+
+    .voice-profile .voice-time {
+      flex: 1;
     }
 
     /* Original / German switch next to the transcript heading */
@@ -1838,6 +2056,8 @@
       flex-direction: column;
       gap: 1.25rem;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+      max-height: calc(100vh - 2rem); /* taller dialogs scroll instead of being cut off at the top and bottom */
+      overflow-y: auto;
     }
 
     .form-group {
@@ -1874,26 +2094,25 @@
       text-decoration: underline;
     }
 
-    .status-dot-mini {
-      display: inline-block;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      margin-left: 0.35rem;
-      vertical-align: middle;
-      position: relative;
-      top: -1px;
-      transition: background-color 0.25s ease, box-shadow 0.25s ease;
+    .settings-section {
+      margin-top: 0.5rem;
+      padding-top: 1.1rem;
+      border-top: 1px solid var(--border-card);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-sub);
     }
 
-    .status-dot-mini.green {
-      background: var(--emerald);
-      box-shadow: 0 0 6px var(--emerald);
+    .settings-section:first-of-type {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none; /* the first section needs no divider */
     }
 
-    .status-dot-mini.orange {
-      background: var(--amber);
-      box-shadow: 0 0 6px var(--amber);
+    .form-hint.warning {
+      color: var(--amber);
     }
 
     .form-hint {
@@ -1916,21 +2135,93 @@
     }
 
     select.form-input,
+    select.sub-input,
     .device-select {
       cursor: pointer;
       appearance: none;
       -webkit-appearance: none;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
       background-repeat: no-repeat;
+    }
+
+    select.form-input:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    select.form-input,
+    select.sub-input {
       background-position: right 1rem center;
       background-size: 1.15rem;
       padding-right: 2.5rem;
     }
 
-    .form-input option {
+    select option {
       background: #0f172a;
       color: #f8fafc;
-      padding: 0.6rem 1rem;
+    }
+
+    /* The open list in the design of the page (Chromium 135+); other browsers show the dark native list */
+    @supports (appearance: base-select) {
+      select.form-input,
+      select.sub-input,
+      .device-select,
+      ::picker(select) {
+        appearance: base-select;
+      }
+
+      select::picker-icon,
+      option::checkmark {
+        display: none; /* the arrow is the background image, the selected entry is highlighted */
+      }
+
+      select:open {
+        border-color: var(--primary);
+      }
+
+      .device-select {
+        align-items: center; /* the text sits in the middle of the click area, level with the label */
+      }
+
+      .device-select button {
+        all: unset;
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis; /* long device names end in … instead of wrapping */
+      }
+
+      ::picker(select) {
+        position-try-order: normal; /* opens below the field whenever it fits, like native lists */
+        margin-block: 6px;
+        padding: 0.35rem;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        background: #0f172a;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+      }
+
+      select option {
+        padding: 0.55rem 0.8rem;
+        border-radius: 8px;
+        background: transparent;
+        color: #cbd5e1;
+        font-size: 0.85rem;
+        cursor: pointer;
+      }
+
+      select option:hover,
+      select option:focus-visible {
+        background: rgba(255, 255, 255, 0.06);
+        color: #f8fafc;
+        outline: none;
+      }
+
+      select option:checked {
+        background: rgba(99, 102, 241, 0.22);
+        color: #fff;
+        font-weight: 600;
+      }
     }
 
     .form-input:focus {
@@ -1975,22 +2266,13 @@
       border-color: rgba(239, 68, 68, 0.7);
     }
 
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 350px;
-      color: var(--text-muted);
-      text-align: center;
-      gap: 1rem;
-    }
-
     /* Fluid Responsive Media Queries */
     @media (max-width: 1100px) {
       .content-grid {
-        grid-template-columns: 300px 1fr;
         gap: 1.25rem;
+      }
+      .content-grid.meeting-open.list-open {
+        grid-template-columns: 300px minmax(0, 1fr);
       }
       .viewer-card {
         padding: 1.5rem;
@@ -2006,9 +2288,8 @@
         grid-template-columns: minmax(0, 1fr);
         gap: 1rem;
       }
-      .content-grid {
-        grid-template-columns: 1fr;
-        gap: 1.25rem;
+      .content-grid.meeting-open.list-open {
+        grid-template-columns: minmax(0, 1fr);
       }
       .sidebar-card {
         max-height: 400px;
@@ -2027,14 +2308,39 @@
     }
 
     @media (max-width: 640px) {
+      /* One row as on wide screens: shorter title, gear without text */
       header {
-        padding: 1rem 1.25rem;
-        flex-direction: column;
-        gap: 0.75rem;
-        align-items: stretch;
+        padding: 0.5rem 0.75rem;
+        gap: 0.5rem;
+      }
+      .brand {
+        gap: 0.6rem;
+        min-width: 0;
+      }
+      .brand-icon {
+        width: 44px;
+        height: 44px;
+      }
+      .brand-text {
+        min-width: 0;
+      }
+      .brand-text h1 {
+        font-size: 1.1rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .brand-text p,
+      .settings-label {
+        display: none;
       }
       .header-actions {
-        justify-content: space-between;
+        flex-shrink: 0;
+        gap: 0.5rem;
+      }
+      .status-badge {
+        padding: 0.35rem 0.65rem;
+        gap: 0.4rem;
       }
       .container {
         padding: 0.75rem;

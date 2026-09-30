@@ -241,7 +241,7 @@ class MeetingRecorder:
         return np.frombuffer(raw, dtype=np.int16).reshape(-1, channels)
 
     def save(self, compress=True, filename=None):
-        """Synchronizes both channels into a 16-bit stereo WAV (plus MP3 copy) and returns the file to upload."""
+        """Synchronizes both channels into a 16-bit stereo WAV (plus mono MP3 copy) and returns the file to upload."""
         name = filename or datetime.fromtimestamp(self.start_time).strftime("meeting_%Y-%m-%d_%H-%M-%S.wav")
         output_filepath = os.path.join(self.output_dir, name)
 
@@ -286,8 +286,10 @@ class MeetingRecorder:
         self.loopback_level = 0.0
 
     @staticmethod
-    def compress_to_mp3(wav_filepath, bitrate="96k"):
-        """Compresses the WAV to MP3 with a local ffmpeg (96 instead of 512 kbit/s, about 80 % smaller)."""
+    def compress_to_mp3(wav_filepath, bitrate="48k"):
+        """Compresses the WAV to a mono MP3 with a local ffmpeg (48 instead of 512 kbit/s, about 90 % smaller).
+        The MP3 is played back and uploaded: Gemini mixes all channels down to mono anyway, while the stereo WAV
+        keeps both channels for the channel timeline and the voice recognition."""
         if not os.path.exists(wav_filepath):
             return wav_filepath
         mp3_filepath = os.path.splitext(wav_filepath)[0] + ".mp3"
@@ -302,7 +304,7 @@ class MeetingRecorder:
                 "-b:a",
                 bitrate,
                 "-ac",
-                "2",
+                "1",
                 mp3_filepath,
             ]
             subprocess.run(cmd, capture_output=True, check=True)

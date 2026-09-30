@@ -5,6 +5,10 @@ description = "Bot-free meeting recorder for Windows that turns Teams/Zoom calls
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+
+[project.urls]
+Homepage = "https://github.com/2g4y1/GhostScribe"
+Issues = "https://github.com/2g4y1/GhostScribe/issues"
 # Runtime dependencies are pinned in requirements.txt (installed by install_requirements.bat),
 # development tools in requirements-dev.txt.
 

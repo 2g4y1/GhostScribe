@@ -10,6 +10,7 @@ from ghostscribe.analyzer import MeetingAnalyzer
 from ghostscribe.i18n import translate
 from ghostscribe.recorder import MeetingRecorder
 from ghostscribe.utils import BANNER, format_duration, print_banner, update_env_file
+from ghostscribe.voices import recognition_enabled
 
 
 def level_bar(level, width=15):
@@ -76,7 +77,10 @@ def main():
     print("\n" + translate("cli.starting_analysis"))
     try:
         result = MeetingAnalyzer(api_key=api_key).analyze_meeting(
-            audio_filepath=audio_path, meeting_title=title, on_status_update=print_step
+            audio_filepath=audio_path,
+            meeting_title=title,
+            on_status_update=print_step,
+            voice_recognition=recognition_enabled(),
         )
     except Exception as e:
         print("\n" + translate("cli.analysis_failed", error=e))

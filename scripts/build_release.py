@@ -23,7 +23,7 @@ RELEASE_FILES = [
 PACKAGE_DIR = "ghostscribe"
 EMPTY_DIRS = ["recordings", "meetings"]
 # Last line of defense in case one of the lists above is ever extended carelessly
-FORBIDDEN = re.compile(r"(^|/)\.env$|\.(wav|mp3|flac)$|^(recordings|meetings)/|__pycache__|\.pyc$")
+FORBIDDEN = re.compile(r"(^|/)\.env$|\.(wav|mp3|flac)$|^(recordings|meetings|models|voices)/|__pycache__|\.pyc$")
 
 
 def project_version() -> str:

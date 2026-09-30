@@ -1,23 +1,31 @@
 """
 Entry point: "python -m ghostscribe" starts the web interface, "python -m ghostscribe --cli" the terminal version.
+The web server itself runs in a child process ("--server") that the console window restarts with R.
 """
 
 import sys
 import threading
-import time
-import webbrowser
 
 import uvicorn
 from dotenv import load_dotenv
 
+from ghostscribe import console
 from ghostscribe.cli import main as run_cli
-from ghostscribe.i18n import translate
-from ghostscribe.utils import APP_URL, BANNER, HOST, PORT, ensure_utf8_console, print_banner
+from ghostscribe.utils import HOST, PORT, ensure_utf8_console
 
 
-def open_browser():
-    time.sleep(1.2)
-    webbrowser.open(APP_URL)
+def run_server():
+    """The web server; the line "stop" or the end of its standard input (console closed) shuts it down."""
+    server = uvicorn.Server(uvicorn.Config("ghostscribe.app:app", host=HOST, port=PORT, reload=False))
+
+    def watch_stdin():
+        for line in sys.stdin:
+            if line.strip() == "stop":
+                break
+        server.should_exit = True
+
+    threading.Thread(target=watch_stdin, daemon=True).start()
+    server.run()
 
 
 def main():
@@ -25,17 +33,10 @@ def main():
     load_dotenv(".env")
     if "--cli" in sys.argv:
         run_cli()
-        return
-
-    print_banner(
-        BANNER,
-        translate("terminal.opening_ui", url=APP_URL),
-        "   " + translate("terminal.stop_hint"),
-        "   " + translate("terminal.cli_tip", command="python -m ghostscribe --cli"),
-    )
-    # Open the browser once the server had a moment to start
-    threading.Thread(target=open_browser, daemon=True).start()
-    uvicorn.run("ghostscribe.app:app", host=HOST, port=PORT, reload=False)
+    elif "--server" in sys.argv:
+        run_server()
+    else:
+        sys.exit(console.run())
 
 
 if __name__ == "__main__":

@@ -13,11 +13,21 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 
+# Audio never belongs in the repository (meetings are personal data, test audio is third-party material)
+*.mp3
+*.wav
+*.m4a
+*.flac
+
 # Private recordings, screenshots, chat context and meeting protocols
 recordings/*
 !recordings/.gitkeep
 meetings/*
 !meetings/.gitkeep
+
+# Local voice recognition: downloaded models and voice profiles (biometric data)
+models/
+voices/
 
 # Release builds (published as GitHub release assets, never committed)
 dist/

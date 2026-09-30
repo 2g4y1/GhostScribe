@@ -22,6 +22,16 @@ from ghostscribe.analyzer import DEFAULT_MODEL, MeetingAnalyzer, recording_start
 from ghostscribe.i18n import available_languages, configured_language, translate
 from ghostscribe.recorder import MeetingRecorder
 from ghostscribe.utils import APP_URL, PORT, format_duration, print_banner, update_env_file
+from ghostscribe.voices import (
+    configured_workers,
+    delete_profile,
+    load_profiles,
+    max_workers,
+    recognition_enabled,
+    rename_speaker,
+    save_profile,
+    valid_name,
+)
 
 load_dotenv(".env")  # the same file update_env_file() writes
 
@@ -51,7 +61,11 @@ async def allow_only_local_ui(request: Request, call_next):
         origin and origin.removeprefix("http://") not in ALLOWED_HOSTS
     ):
         return JSONResponse(status_code=403, content={"detail": "Forbidden"})
-    return await call_next(request)
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        # Always revalidate (cheap with ETag): after an update, page and scripts must come from the same version
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -79,6 +93,7 @@ app_state = {
     "ai_act_mode": _default_ai_act_mode(),
     "last_meeting_id": None,
     "last_error": None,
+    "pending_recording": None,  # saved recording waiting for chat history, slides and the start of its analysis
 }
 
 
@@ -97,13 +112,17 @@ class AttachmentItem(BaseModel):
     data: str  # Base64 data URL or raw base64 string
 
 
-class StopRequest(BaseModel):
+class RecordingContextRequest(BaseModel):
+    """Input added after the recording: corrected title and participants, chat history and slides."""
+
+    title: str | None = None
+    participants: str | None = None
+    meeting_type: str | None = None
     chat_text: str = ""
     images: list[AttachmentItem] = []
-    ai_act_mode: bool = True
 
 
-class AnalyzeRequest(BaseModel):
+class AnalyzeRequest(RecordingContextRequest):
     ai_act_mode: bool = True
     user_name: str = ""
 
@@ -115,6 +134,14 @@ class SettingsRequest(BaseModel):
     model: str | None = None
     default_ai_act_mode: bool | None = None
     ui_language: str | None = None
+    voice_recognition: bool | None = None
+    voice_workers: int | None = None
+
+
+class VoiceNameRequest(BaseModel):
+    label: str
+    name: str
+    consent: bool = False
 
 
 def api_error(status_code: int, key: str, **params) -> HTTPException:
@@ -200,7 +227,7 @@ def _recording_heartbeat(started_at: float):
                 "terminal.heartbeat",
                 duration=format_duration(recorder.get_duration()),
                 mic=int(recorder.mic_level * 100),
-                teams=int(recorder.loopback_level * 100),
+                playback=int(recorder.loopback_level * 100),
             )
         )
 
@@ -228,10 +255,13 @@ def get_status():
         "loopback_device": recorder.loopback_info.get("name") if devices_in_use else None,
         "has_api_key": len(os.getenv("GEMINI_API_KEY", "").strip()) > 5,
         "model": os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
-        "ai_act_mode": app_state["ai_act_mode"],
         "default_ai_act_mode": _default_ai_act_mode(),
+        "voice_recognition": recognition_enabled(),
+        "voice_workers": configured_workers(),
+        "voice_workers_max": max_workers(),
         "last_meeting_id": app_state["last_meeting_id"],
         "last_error": app_state["last_error"],
+        "pending_recording": app_state["pending_recording"],
         "current_title": app_state["current_title"],
         "current_participants": app_state["current_participants"],
         "current_meeting_type": app_state["current_meeting_type"],
@@ -268,6 +298,7 @@ def start_recording(req: StartRequest):
         app_state["current_user_name"] = req.user_name.strip() or "Ich"
         app_state["ai_act_mode"] = req.ai_act_mode
         app_state["last_error"] = None
+        app_state["pending_recording"] = None  # an unanalyzed recording stays in the list of recordings
         recorder.start(mic_index=req.mic_device, loopback_index=req.loopback_device)
         app_state["status"] = "recording"
         threading.Thread(target=_recording_heartbeat, args=(recorder.start_time,), daemon=True).start()
@@ -378,6 +409,8 @@ def run_gemini_analysis(audio_path: str, context: dict):
             duration=context.get("duration"),
             on_status_update=_set_step,
             ai_act_mode=context.get("ai_act_mode", True),
+            voice_recognition=recognition_enabled(),
+            voice_workers=configured_workers(),
         )
 
         audio_base = os.path.splitext(os.path.basename(audio_path))[0]
@@ -392,8 +425,14 @@ def run_gemini_analysis(audio_path: str, context: dict):
         app_state["process_step"] = ""
 
 
-def _save_and_analyze(context: dict):
-    """Background task after stopping: writes the audio files, keeps the context for retries, analyzes."""
+def _save_context(audio_base: str, context: dict):
+    with open(_context_path(audio_base), "w", encoding="utf-8") as f:
+        json.dump(context, f, indent=2, ensure_ascii=False)
+
+
+def _save_recording(context: dict):
+    """Background task after stopping: writes the audio files and the context of the recording.
+    The analysis starts from the web interface once chat history and slides could be added."""
     try:
         audio_path = recorder.save(compress=True)
     except Exception as e:
@@ -402,42 +441,36 @@ def _save_and_analyze(context: dict):
         app_state["last_error"] = translate("error.save_audio_failed", error=e)
         return
 
-    audio_base = os.path.splitext(os.path.basename(audio_path))[0]
-    with open(_context_path(audio_base), "w", encoding="utf-8") as f:
-        json.dump(context, f, indent=2, ensure_ascii=False)
+    _save_context(os.path.splitext(os.path.basename(audio_path))[0], context)
     print("   " + translate("terminal.audio_saved", path=audio_path))
-    run_gemini_analysis(audio_path, context)
+    app_state["pending_recording"] = os.path.basename(audio_path)
+    app_state["status"] = "idle"
+    app_state["process_step"] = translate("step.recording_saved")
 
 
 @app.post("/api/record/stop")
-def stop_recording(background_tasks: BackgroundTasks, req: StopRequest | None = None):
+def stop_recording(background_tasks: BackgroundTasks):
     if app_state["status"] != "recording":
         raise api_error(400, "api.no_active_recording")
 
     recorder.stop_capture()
-    req = req or StopRequest(ai_act_mode=app_state["ai_act_mode"])
     context = {
         "title": app_state["current_title"],
         "participants": app_state["current_participants"],
         "meeting_type": app_state["current_meeting_type"],
         "user_name": app_state["current_user_name"],
-        "chat_text": req.chat_text.strip(),
-        "image_paths": save_attachments(req.images),
-        "ai_act_mode": req.ai_act_mode,
+        "ai_act_mode": app_state["ai_act_mode"],
         "duration": format_duration(recorder.end_time - recorder.start_time),
     }
     app_state["status"] = "processing"
     app_state["process_step"] = translate("step.saving_audio")
-    background_tasks.add_task(_save_and_analyze, context)
+    background_tasks.add_task(_save_recording, context)
 
-    mode = translate("mode.ai_act" if req.ai_act_mode else "mode.sentiment")
-    lines = [translate("terminal.recording_stopped", duration=context["duration"], mode=mode)]
-    if context["chat_text"]:
-        lines.append("   " + translate("terminal.chat_attached", count=len(context["chat_text"])))
-    if context["image_paths"]:
-        lines.append("   " + translate("terminal.screenshots_attached", count=len(context["image_paths"])))
-    lines.append("   " + translate("terminal.analysis_background"))
-    print_banner(*lines)
+    mode = translate("mode.ai_act" if context["ai_act_mode"] else "mode.sentiment")
+    print_banner(
+        translate("terminal.recording_stopped", duration=context["duration"], mode=mode),
+        "   " + translate("terminal.waiting_for_analysis"),
+    )
     return {"success": True}
 
 
@@ -451,34 +484,72 @@ def list_unprocessed_recordings():
             base = os.path.splitext(os.path.basename(path))[0]
             if base not in processed and os.path.getsize(path) >= 10000:  # ignore accidental test clicks
                 recordings[base] = path
-    return [
-        {
-            "filename": os.path.basename(path),
-            "title": _load_context(base).get("title", ""),
-            "recorded_at": recording_start(path).isoformat(timespec="minutes"),
-            "size_kb": round(os.path.getsize(path) / 1024),
-        }
-        for base, path in sorted(recordings.items(), reverse=True)
-    ]
+    items = []
+    for base, path in sorted(recordings.items(), reverse=True):
+        context = _load_context(base)
+        items.append(
+            {
+                "filename": os.path.basename(path),
+                "title": context.get("title", ""),
+                "participants": context.get("participants", ""),
+                "meeting_type": context.get("meeting_type", "standard"),
+                "chat_text": context.get("chat_text", ""),
+                "recorded_at": recording_start(path).isoformat(timespec="minutes"),
+                "size_kb": round(os.path.getsize(path) / 1024),
+            }
+        )
+    return items
+
+
+def _complete_context(filename: str, req: RecordingContextRequest, defaults: dict) -> tuple[str, dict]:
+    """Saved context of a recording, completed by the input after the recording and saved again for retries."""
+    audio_path = _recording_path(filename)
+    if not os.path.isfile(audio_path):
+        raise api_error(404, "api.audio_not_found")
+    audio_base = os.path.splitext(os.path.basename(audio_path))[0]
+    # The saved input of the recording (title, mode, earlier chat and slides) takes precedence over the defaults;
+    # what was entered after the recording completes or corrects it
+    context = {**defaults, **_load_context(audio_base)}
+    for key in ("title", "participants", "meeting_type"):
+        value = getattr(req, key)
+        if value is not None:
+            context[key] = value.strip()
+    if req.chat_text.strip():
+        context["chat_text"] = req.chat_text.strip()
+    if req.images:
+        context["image_paths"] = [*context.get("image_paths", []), *save_attachments(req.images)]
+    _save_context(audio_base, context)
+    if app_state["pending_recording"] == os.path.basename(audio_path):
+        app_state["pending_recording"] = None
+    return audio_path, context
+
+
+@app.put("/api/recordings/{filename}/context")
+def save_recording_context(filename: str, req: RecordingContextRequest):
+    """Keeps title, chat history and slides of a recording that is analyzed later."""
+    _complete_context(filename, req, {})
+    return {"success": True}
 
 
 @app.post("/api/recordings/{filename}/analyze")
 def analyze_existing_recording(filename: str, background_tasks: BackgroundTasks, req: AnalyzeRequest | None = None):
-    audio_path = _recording_path(filename)
-    if not os.path.isfile(audio_path):
-        raise api_error(404, "api.audio_not_found")
     if app_state["status"] in ["recording", "processing"]:
         raise api_error(400, "api.busy")
-
     req = req or AnalyzeRequest(ai_act_mode=_default_ai_act_mode())
-    context = {"ai_act_mode": req.ai_act_mode, "user_name": req.user_name.strip() or "Ich"}
-    # The saved input of the original recording (title, chat, screenshots, mode) takes precedence
-    context.update(_load_context(os.path.splitext(filename)[0]))
+    defaults = {"ai_act_mode": req.ai_act_mode, "user_name": req.user_name.strip() or "Ich"}
+    audio_path, context = _complete_context(filename, req, defaults)
 
     app_state["status"] = "processing"
     app_state["process_step"] = translate("step.starting_analysis_for", name=filename)
     app_state["last_error"] = None
     background_tasks.add_task(run_gemini_analysis, audio_path, context)
+
+    lines = [translate("terminal.analysis_started", name=filename)]
+    if context.get("chat_text"):
+        lines.append("   " + translate("terminal.chat_attached", count=len(context["chat_text"])))
+    if context.get("image_paths"):
+        lines.append("   " + translate("terminal.screenshots_attached", count=len(context["image_paths"])))
+    print_banner(*lines)
     return {"success": True}
 
 
@@ -494,7 +565,15 @@ def delete_recording(filename: str):
     deleted_files = _delete_files(_recording_files(audio_base))
     if not deleted_files:
         raise api_error(404, "api.recording_not_found")
+    if os.path.splitext(app_state["pending_recording"] or "")[0] == audio_base:
+        app_state["pending_recording"] = None
     return {"success": True, "deleted_files": deleted_files}
+
+
+def _without_fingerprints(meta: dict) -> dict:
+    """Meeting metadata for the web interface: the voice fingerprints (biometric data) stay on the server."""
+    voices = [{k: v for k, v in voice.items() if k != "embedding"} for voice in meta.get("voices", [])]
+    return {**meta, "voices": voices}
 
 
 @app.get("/api/meetings")
@@ -516,7 +595,7 @@ def list_meetings():
                 else:
                     data["content"] = ""
 
-                meetings.append(data)
+                meetings.append(_without_fingerprints(data))
         except Exception:
             continue
     meetings.sort(key=lambda m: m.get("meeting_start") or m.get("created_at") or "", reverse=True)
@@ -538,7 +617,7 @@ def get_meeting(meeting_id: str):
 
     audio_filename = os.path.basename(meta.get("audio_file", ""))
     return {
-        "metadata": meta,
+        "metadata": _without_fingerprints(meta),
         "markdown": markdown,
         "audio_url": f"/recordings/{audio_filename}" if audio_filename else None,
     }
@@ -581,6 +660,48 @@ def get_audio_file(filename: str):
     return FileResponse(filepath, media_type=media_type)
 
 
+@app.get("/api/voices")
+def list_voice_profiles():
+    """Saved voice profiles without their fingerprints."""
+    return [{key: p[key] for key in ("id", "name", "seconds", "samples", "updated_at")} for p in load_profiles()]
+
+
+@app.delete("/api/voices/{profile_id}")
+def delete_voice_profile(profile_id: str):
+    if not delete_profile(profile_id):
+        raise api_error(404, "api.voice_profile_not_found")
+    return {"success": True}
+
+
+@app.post("/api/meetings/{meeting_id}/voices")
+def name_voice(meeting_id: str, req: VoiceNameRequest):
+    """Names a voice of the meeting: saves the voice profile (consent required) and updates the minutes."""
+    json_path, md_path = _meeting_paths(meeting_id)
+    if not os.path.exists(json_path) or not os.path.exists(md_path):
+        raise api_error(404, "api.meeting_not_found")
+    if not req.consent:
+        raise api_error(400, "api.voice_consent_required")
+    name = req.name.strip()
+    if not valid_name(name):
+        raise api_error(400, "api.invalid_voice_name")
+
+    with open(json_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    voice = next((v for v in meta.get("voices", []) if v["label"] == req.label), None)
+    if voice is None:
+        raise api_error(404, "api.voice_not_found")
+
+    profile = save_profile(name, voice["embedding"], voice["seconds"])
+    with open(md_path, encoding="utf-8") as f:
+        markdown = rename_speaker(f.read(), voice["label"], name)
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(markdown)
+    voice.update(label=name, profile_id=profile["id"], similarity=None, confirmed=True)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    return {"success": True}
+
+
 @app.post("/api/settings")
 def update_settings(req: SettingsRequest):
     updates = {}
@@ -596,6 +717,12 @@ def update_settings(req: SettingsRequest):
         if req.ui_language not in available_languages():
             raise api_error(400, "api.unknown_language", language=req.ui_language)
         updates["UI_LANGUAGE"] = req.ui_language
+    if req.voice_recognition is not None:
+        updates["VOICE_RECOGNITION"] = "true" if req.voice_recognition else "false"
+    if req.voice_workers is not None:
+        if not 1 <= req.voice_workers <= max_workers():
+            raise api_error(400, "api.invalid_setting")
+        updates["VOICE_WORKERS"] = str(req.voice_workers)
 
     try:
         update_env_file(updates)

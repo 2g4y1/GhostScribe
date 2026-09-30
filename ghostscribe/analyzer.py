@@ -11,6 +11,7 @@ import os
 import re
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import numpy as np
@@ -19,6 +20,7 @@ from google.genai import types
 
 from ghostscribe.i18n import LocalizedError
 from ghostscribe.utils import format_duration
+from ghostscribe.voices import recognize_voices, voice_context
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +116,8 @@ Die Aufnahme basiert auf zwei Hardware-Quellen:
 
 # §. Zeitstempel und Umfang
 - Zeitstempel in allen Abschnitten immer im Format [HH:MM:SS] ab Beginn der Aufnahme, auch bei Aufnahmen unter einer Stunde (also [00:05:18], nie [05:18]); Zeiträume als [HH:MM:SS–HH:MM:SS].
-- Dauer bis 45 Minuten: Kernpunkte nach Themen gliedern, im letzten Abschnitt ein vollständiges Transkript. Vollständig heißt: jeder Redebeitrag vom Anfang bis zum Ende der Aufnahme, Satz für Satz – nichts zusammenfassen, kürzen oder auslassen. Bereinigt werden nur Füllwörter, Versprecher und Wortwiederholungen. Setze bei jedem Sprecherwechsel einen Zeitstempel, in längeren Beiträgen spätestens jede Minute einen neuen.
-- Dauer über 45 Minuten: Kernpunkte in chronologische Phasen gliedern („### Phase 1 [00:00:00–00:42:10]: <Thema>“), im letzten Abschnitt ein verdichtetes Verlaufsprotokoll auf Deutsch mit Schlüsselzitaten in der Originalsprache, Wendepunkten und Entscheidungen. Smalltalk, Pausen und Technikprobleme lässt du weg, damit das Ausgabelimit für Inhalte reicht.
+- Dauer bis 45 Minuten: Kernpunkte nach Themen gliedern, im letzten Abschnitt ein vollständiges Transkript. Vollständig heißt: jeder Redebeitrag vom Anfang bis zum Ende der Aufnahme, Satz für Satz – nichts zusammenfassen, kürzen oder auslassen. Bereinigt werden nur Füllwörter, Versprecher und Wortwiederholungen. Setze bei jedem Sprecherwechsel einen Zeitstempel und teile längere Beiträge so auf, dass spätestens jede Minute ein neuer Eintrag mit Zeitstempel beginnt – auch dann, wenn unter den Einträgen Übersetzungen stehen.
+- Dauer über 45 Minuten: Kernpunkte in chronologische Phasen gliedern („### Phase 1 [00:00:00–00:42:10]: <Thema>“). Die Phasen schließen lückenlos aneinander an und überschneiden sich nicht: Jede beginnt dort, wo die vorige endet, die letzte endet mit der Aufnahme. Ein Thema, das später wieder aufgegriffen wird, erscheint in der Phase, in der es besprochen wird. Im letzten Abschnitt ein verdichtetes Verlaufsprotokoll auf Deutsch mit Schlüsselzitaten in der Originalsprache, Wendepunkten und Entscheidungen. Smalltalk, Pausen und Technikprobleme lässt du weg, damit das Ausgabelimit für Inhalte reicht.
 
 # §. Priorität von Aufgaben
 - 🔴 Hoch: {priority_high}
@@ -225,7 +227,7 @@ def get_system_instruction(ai_act_mode: bool = True) -> str:
 
 
 def find_wav(audio_filepath: str) -> str | None:
-    """Returns the uncompressed stereo WAV of a recording (the MP3 is only a compressed copy)."""
+    """Returns the uncompressed stereo WAV of a recording (the MP3 is a compressed mono copy)."""
     wav_path = os.path.splitext(audio_filepath)[0] + ".wav"
     return wav_path if os.path.exists(wav_path) else None
 
@@ -350,10 +352,14 @@ class MeetingAnalyzer:
         duration=None,
         on_status_update=None,
         ai_act_mode=True,
+        voice_recognition=False,
+        voice_workers=1,
     ):
         """
         Uploads audio & optional slides/chat to Gemini, requests analysis, and saves markdown report.
         on_status_update(key, **params) receives progress as translation keys of the locale files.
+        With voice_recognition the voices on the system-audio channel are separated and recognized locally while
+        the files are uploaded.
         """
         if not os.path.exists(audio_filepath):
             raise LocalizedError("error.audio_file_missing", path=audio_filepath)
@@ -371,6 +377,15 @@ class MeetingAnalyzer:
         def report(key, **params):
             if on_status_update:
                 on_status_update(key, **params)
+
+        # The local voice recognition runs while the files are uploaded; the request needs its result only
+        wav_path = find_wav(audio_filepath)
+        recognition = None
+        if voice_recognition and wav_path:
+            report("step.recognizing_voices")
+            background = ThreadPoolExecutor(1)
+            recognition = background.submit(recognize_voices, wav_path, workers=voice_workers, report=report)
+            background.shutdown(wait=False)
 
         try:
             report("step.uploading_audio", name=os.path.basename(audio_filepath))
@@ -404,6 +419,17 @@ class MeetingAnalyzer:
                             uploaded_remote_files.append(up_img)
                         except Exception as img_err:
                             report("step.image_upload_failed", name=os.path.basename(img_path), error=img_err)
+
+            voices = []
+            if recognition:
+                try:
+                    if not recognition.done():
+                        report("step.recognizing_voices")
+                    voices = recognition.result()
+                    report("step.voices_recognized", count=len(voices))
+                except Exception as e:  # optional feature: the minutes are still created without it
+                    logger.warning("Voice recognition failed: %s", e)
+                    report("step.voice_recognition_failed", error=e)
 
             specific_focus = MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
 
@@ -456,7 +482,7 @@ Weitere Teilnehmer: {participants or "keine Angaben"}
 <typ_schwerpunkt>
 {specific_focus}
 </typ_schwerpunkt>
-{channel_block}
+{channel_block}{voice_context(voices)}
 """
 
             if chat_text and chat_text.strip():
@@ -555,6 +581,7 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
                 "has_chat": bool(chat_text and chat_text.strip()),
                 "image_count": len(uploaded_images),
                 "attachments": list(image_filepaths or []),
+                "voices": voices,
             }
             with open(json_filename, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2, ensure_ascii=False)

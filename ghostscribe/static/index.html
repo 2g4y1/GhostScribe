@@ -28,14 +28,17 @@
       <div id="statusBadge" class="status-badge">
         <span class="dot"></span>
         <span id="statusText"></span>
+        <button type="button" id="sentimentModeWarning" class="mode-warning" data-i18n-title="status.sentiment_warning" data-i18n-aria-label="status.sentiment_warning" hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
+        </button>
       </div>
 
-      <button id="settingsBtn" class="btn-secondary">
+      <button id="settingsBtn" class="btn-secondary" data-i18n-title="header.settings" data-i18n-aria-label="header.settings">
         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
-        <span data-i18n="header.settings"></span>
+        <span class="settings-label" data-i18n="header.settings"></span>
       </button>
     </div>
   </header>
@@ -51,7 +54,6 @@
             <span>🎙️</span>
             <span data-i18n="devices.mic"></span>
             <div class="user-name-wrapper">
-              <span>(</span>
               <input
                 type="text"
                 id="userSpeakerName"
@@ -60,10 +62,11 @@
                 data-i18n-placeholder="devices.user_name_placeholder"
                 data-i18n-title="devices.user_name_title"
               />
-              <span data-i18n="devices.mic_channel"></span>
             </div>
           </div>
-          <select id="micSelect" class="device-select" data-i18n-title="devices.mic_select_title" data-i18n-aria-label="devices.mic"></select>
+          <select id="micSelect" class="device-select" data-i18n-title="devices.mic_select_title" data-i18n-aria-label="devices.mic">
+            <button><selectedcontent></selectedcontent></button>
+          </select>
         </div>
         <div class="vu-meter">
           <div id="micVuFill" class="vu-fill mic"></div>
@@ -73,10 +76,12 @@
       <div class="device-card">
         <div class="device-header">
           <div class="device-title">
-            <span>🎧</span>
+            <span>🔊</span>
             <span data-i18n="devices.loopback"></span>
           </div>
-          <select id="loopbackSelect" class="device-select" data-i18n-title="devices.loopback_select_title" data-i18n-aria-label="devices.loopback_aria"></select>
+          <select id="loopbackSelect" class="device-select" data-i18n-title="devices.loopback_select_title" data-i18n-aria-label="devices.loopback">
+            <button><selectedcontent></selectedcontent></button>
+          </select>
         </div>
         <div class="vu-meter">
           <div id="teamsVuFill" class="vu-fill teams"></div>
@@ -91,7 +96,9 @@
       <div class="title-input-wrapper">
         <input type="text" id="meetingTitleInput" class="title-input" data-i18n-placeholder="console.title_placeholder" />
         <div class="meta-inputs-grid">
-          <input type="text" id="meetingParticipantsInput" class="sub-input" data-i18n-placeholder="console.participants_placeholder" />
+          <div id="participantsField" class="sub-input participants-field">
+            <input type="text" id="meetingParticipantsInput" class="participants-input" data-i18n-placeholder="console.participants_placeholder" />
+          </div>
           <select id="meetingTypeSelect" class="sub-input">
             <option value="standard" data-i18n="type.standard"></option>
             <option value="sprint" data-i18n="type.sprint"></option>
@@ -100,22 +107,11 @@
             <option value="brainstorming" data-i18n="type.brainstorming"></option>
           </select>
         </div>
-
-        <!-- EU AI Act Compliance Toggle (Default: True) -->
-        <div class="ai-act-banner-row">
-          <label class="ai-act-toggle" id="aiActToggleContainer">
-            <input type="checkbox" id="aiActModeToggle" checked />
-            <span class="ai-act-switch"></span>
-            <span class="ai-act-info">
-              <span id="aiActModeTitle" class="ai-act-title"></span>
-              <span id="aiActModeDesc" class="ai-act-desc"></span>
-            </span>
-          </label>
-        </div>
       </div>
 
-      <!-- Meeting context: chat, notes, slides and files -->
-      <div class="attachments-accordion" id="attachmentsAccordion">
+      <!-- After the recording: chat, notes, slides and files for the analysis -->
+      <p id="contextHint" class="context-hint" data-i18n="record.saved_hint" hidden></p>
+      <div class="attachments-accordion" id="attachmentsAccordion" hidden>
         <button type="button" class="attachments-toggle" id="attachmentsToggle" aria-expanded="false" data-i18n-title="attachments.toggle_title">
           <div class="toggle-left">
             <span class="toggle-icon">📎</span>
@@ -199,8 +195,11 @@
         <div class="record-btn-container">
           <div id="pulseRing" class="pulse-ring" style="display: none;"></div>
           <button id="recordToggleBtn" class="record-btn start">
-            <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg class="icon-record" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+            <svg class="icon-analyze" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
             </svg>
             <span id="recordBtnText"></span>
           </button>
@@ -212,6 +211,7 @@
           </svg>
           <span data-i18n="record.discard"></span>
         </button>
+        <button id="laterBtn" class="btn-secondary" data-i18n="record.later" data-i18n-title="record.later_title" hidden></button>
       </div>
 
       <!-- Processing status banner -->
@@ -225,29 +225,32 @@
       <div id="errorBanner" class="error-banner" role="alert" hidden></div>
     </div>
 
-    <!-- Content Grid: Sidebar + Viewer -->
-    <div class="content-grid">
+    <!-- Content Grid: meetings list (collapsed at first) and the minutes of the opened meeting -->
+    <div id="contentGrid" class="content-grid">
 
       <!-- Meetings History Sidebar -->
       <div class="sidebar-card">
-        <div class="sidebar-header">
-          <div class="sidebar-title-group">
+        <button type="button" id="meetingsToggle" class="sidebar-header" aria-expanded="false" aria-controls="meetingsBody">
+          <span class="sidebar-title-group">
             <span data-i18n="sidebar.meetings"></span>
             <span id="meetingCount" class="counter-badge">0</span>
-          </div>
-        </div>
+          </span>
+          <svg class="sidebar-chevron" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+        </button>
         <div id="unprocessedSection" class="unprocessed-section" hidden>
           <div class="unprocessed-title" data-i18n="sidebar.unprocessed"></div>
           <div id="unprocessedList" class="unprocessed-list"></div>
         </div>
-        <div class="search-input-wrapper">
-          <input type="text" id="searchInput" class="search-input" data-i18n-placeholder="sidebar.search_placeholder" />
-          <button id="clearSearchBtn" class="clear-search-btn" style="display: none;" data-i18n-title="sidebar.clear_search">✕</button>
+        <div id="meetingsBody" class="meetings-body">
+          <div class="search-input-wrapper">
+            <input type="text" id="searchInput" class="search-input" data-i18n-placeholder="sidebar.search_placeholder" />
+            <button id="clearSearchBtn" class="clear-search-btn" style="display: none;" data-i18n-title="sidebar.clear_search">✕</button>
+          </div>
+          <div id="meetingsList" class="meetings-list"></div>
         </div>
-        <div id="meetingsList" class="meetings-list"></div>
       </div>
 
-      <!-- Protocol Viewer -->
+      <!-- Protocol Viewer (only while a meeting is open) -->
       <div class="viewer-card">
         <div class="viewer-header">
           <div class="viewer-info">
@@ -255,46 +258,52 @@
               <h2 id="viewTitle" class="viewer-title"></h2>
               <span id="searchMatchBadge" class="search-match-badge found" style="display: none;"></span>
             </div>
-            <p id="viewMeta" class="viewer-meta"></p>
+            <div id="viewMeta" class="viewer-meta"></div>
           </div>
           <div class="viewer-tools">
-            <button id="copyMdBtn" class="btn-secondary btn-primary-action" style="display: none;" data-i18n-title="viewer.copy_title">
+            <button id="copyMdBtn" class="btn-secondary btn-primary-action" data-i18n-title="viewer.copy_title">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
               </svg>
               <span data-i18n="viewer.copy"></span>
             </button>
-            <button id="downloadMdBtn" class="btn-secondary" style="display: none;" data-i18n-title="viewer.download_title">
+            <button id="downloadMdBtn" class="btn-secondary" data-i18n-title="viewer.download_title">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               <span data-i18n="viewer.download"></span>
             </button>
-            <button id="deleteMeetingBtn" class="btn-secondary btn-danger" style="display: none;" data-i18n-title="sidebar.delete_meeting">
+            <button id="deleteMeetingBtn" class="btn-secondary btn-danger" data-i18n-title="sidebar.delete_meeting">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
               <span data-i18n="viewer.delete"></span>
             </button>
+            <button type="button" id="closeMeetingBtn" class="viewer-close" data-i18n-title="viewer.close" data-i18n-aria-label="viewer.close">
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
           </div>
         </div>
 
         <!-- Audio Player Section -->
-        <div id="audioPlayerSection" class="audio-player-wrapper" style="display: none;">
-          <div class="audio-player-row">
-            <span class="audio-label" data-i18n="viewer.audio"></span>
-            <audio id="audioElement" controls></audio>
-          </div>
-          <div class="audio-mode-bar">
-            <span class="audio-mode-label" data-i18n="viewer.channel_mix"></span>
-            <div class="audio-mode-pills">
-              <button type="button" class="audio-mode-btn active" data-mode="mono" data-i18n="viewer.mode_mono" data-i18n-title="viewer.mode_mono_title"></button>
-              <button type="button" class="audio-mode-btn" data-mode="stereo" data-i18n="viewer.mode_stereo" data-i18n-title="viewer.mode_stereo_title"></button>
-              <button type="button" class="audio-mode-btn" data-mode="right" data-i18n="viewer.mode_right" data-i18n-title="viewer.mode_right_title"></button>
-              <button type="button" class="audio-mode-btn" data-mode="left" data-i18n="viewer.mode_left" data-i18n-title="viewer.mode_left_title"></button>
-            </div>
-          </div>
+        <div id="audioPlayerSection" class="audio-player" style="display: none;">
+          <audio id="audioElement" preload="metadata"></audio>
+          <button type="button" id="playPauseBtn" class="player-play" data-i18n-title="viewer.play" data-i18n-aria-label="viewer.play">
+            <svg class="icon-play" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" /></svg>
+            <svg class="icon-pause" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+          </button>
+          <span id="playerTime" class="player-time">00:00:00</span>
+          <input type="range" id="playerSeek" class="player-seek" min="0" max="1000" value="0" data-i18n-aria-label="viewer.seek" />
+          <span id="playerDuration" class="player-time">00:00:00</span>
+          <button type="button" id="playerSpeed" class="mini-action-btn player-speed" data-i18n-title="viewer.speed">1×</button>
+          <button type="button" id="playerMute" class="mini-action-btn player-mute" data-i18n-title="viewer.mute" data-i18n-aria-label="viewer.mute">
+            <svg class="icon-volume" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z" /></svg>
+            <svg class="icon-muted" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6M17 9l6 6" /></svg>
+          </button>
         </div>
+
+        <!-- Voices of the recording (local voice recognition) -->
+        <div id="voicesPanel" class="voices-panel" hidden></div>
 
         <!-- Rendered Markdown Body -->
         <div id="markdownBody" class="markdown-body"></div>
@@ -320,27 +329,20 @@
         <p data-i18n-html="settings.welcome_text"></p>
       </div>
 
+      <h3 class="settings-section" data-i18n="settings.section_general"></h3>
       <div class="form-group">
         <label for="languageSelect" data-i18n="settings.language"></label>
         <select id="languageSelect" class="form-input"></select>
       </div>
 
+      <h3 class="settings-section" data-i18n="settings.section_gemini"></h3>
       <div class="form-group">
         <div class="form-label-row">
-          <label for="apiKeyInput">
-            <span data-i18n="settings.api_key"></span>
-            <span id="apiKeyDot" class="status-dot-mini green"></span>
-          </label>
+          <label for="apiKeyInput" data-i18n="settings.api_key"></label>
           <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="form-link" data-i18n="settings.get_key"></a>
         </div>
         <input type="password" id="apiKeyInput" class="form-input" placeholder="AIzaSy..." autocomplete="off" />
         <span id="apiKeyHint" class="form-hint"></span>
-      </div>
-
-      <div class="form-group">
-        <label for="settingsUserNameInput" data-i18n="settings.user_name"></label>
-        <input type="text" id="settingsUserNameInput" class="form-input" data-i18n-placeholder="settings.user_name_placeholder" />
-        <span class="form-hint" data-i18n-html="settings.user_name_tip"></span>
       </div>
 
       <div class="form-group">
@@ -354,12 +356,33 @@
       </div>
 
       <div class="form-group">
-        <label for="defaultAiActSelect" data-i18n="settings.default_mode"></label>
+        <label for="defaultAiActSelect" data-i18n="settings.mode"></label>
         <select id="defaultAiActSelect" class="form-input">
           <option value="true" data-i18n="settings.mode_ai_act"></option>
           <option value="false" data-i18n="settings.mode_sentiment"></option>
         </select>
-        <span class="form-hint" data-i18n="settings.mode_hint"></span>
+        <span id="modeHint" class="form-hint"></span>
+      </div>
+
+      <h3 class="settings-section" data-i18n="settings.voice_recognition"></h3>
+      <div class="form-group">
+        <label for="voiceRecognitionSelect" data-i18n="settings.voice_separate"></label>
+        <select id="voiceRecognitionSelect" class="form-input">
+          <option value="false" data-i18n="settings.voice_off"></option>
+          <option value="true" data-i18n="settings.voice_on"></option>
+        </select>
+        <span class="form-hint" data-i18n-html="settings.voice_hint"></span>
+      </div>
+
+      <div class="form-group">
+        <label for="voiceWorkersSelect" data-i18n="settings.voice_workers"></label>
+        <select id="voiceWorkersSelect" class="form-input"></select>
+        <span class="form-hint" data-i18n="settings.voice_workers_hint"></span>
+      </div>
+
+      <div class="voice-profiles">
+        <span class="voice-profiles-title" data-i18n="settings.voice_profiles"></span>
+        <ul id="voiceProfilesList" class="voice-profiles-list"></ul>
       </div>
 
       <div class="modal-actions">
