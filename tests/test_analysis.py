@@ -12,6 +12,8 @@ from ghostscribe import analyzer
 from ghostscribe.analyzer import MeetingAnalyzer
 from ghostscribe.i18n import LocalizedError
 
+from fakes import Clock
+
 MINUTES = "# 📝 Besprechungsprotokoll: Budget 2027\n\n## 🎯 Management Summary\nText"
 
 
@@ -205,11 +207,15 @@ def test_audio_that_google_cannot_process_is_reported(tmp_path, audio):
 
 
 def test_processing_that_does_not_finish_gives_up(tmp_path, audio, monkeypatch):
-    monkeypatch.setattr(analyzer, "PROCESSING_TIMEOUT", 0)
-    monkeypatch.setattr(analyzer.time, "sleep", lambda seconds: None)
-    files = FakeFiles(states=["PROCESSING"] * 10)
+    # Only the waiting moves the clock: the real one advances in 16 ms steps on Windows before Python 3.13, so a
+    # timeout of 0 seconds could pass unnoticed while the test runs through all states within one step
+    clock = Clock()
+    monkeypatch.setattr(analyzer, "PROCESSING_TIMEOUT", 120)
+    monkeypatch.setattr(analyzer.time, "monotonic", clock)
+    monkeypatch.setattr(analyzer.time, "sleep", lambda seconds: setattr(clock, "now", clock.now + seconds))
+    files = FakeFiles(states=["PROCESSING"] * 100)
 
-    with pytest.raises(LocalizedError, match="0 minutes"):
+    with pytest.raises(LocalizedError, match="2 minutes"):
         analyze(tmp_path, audio, FakeModels(response()), files=files)
 
     assert files.deleted == ["files/1"]
