@@ -1,22 +1,38 @@
 """
-Shared fixtures. The app keeps recordings/, meetings/ and .env in the working directory,
-so the API tests run in an isolated temporary directory with a dummy .env.
+Shared fixtures. The app keeps recordings/, meetings/ and .env in the working directory and reads .env when it is
+imported, so the tests switch to an isolated temporary directory with a dummy .env before any test module (and with
+it the app) is imported.
 """
 
 import os
+import shutil
+import tempfile
+from pathlib import Path
 
 import pytest
 
 
-@pytest.fixture(scope="session")
-def workdir(tmp_path_factory):
-    path = tmp_path_factory.mktemp("ghostscribe")
+def pytest_configure(config):
+    path = Path(tempfile.mkdtemp(prefix="ghostscribe-tests-"))
     (path / "meetings").mkdir()
     (path / ".env").write_text("GEMINI_API_KEY=dummy-key-for-tests\nGEMINI_MODEL=test-model\n", encoding="utf-8")
-    previous = os.getcwd()
+    config.stash[WORKDIR] = path
     os.chdir(path)
-    yield path
-    os.chdir(previous)
+
+
+def pytest_unconfigure(config):
+    path = config.stash.get(WORKDIR, None)
+    if path is not None:
+        os.chdir(config.invocation_params.dir)
+        shutil.rmtree(path, ignore_errors=True)
+
+
+WORKDIR = pytest.StashKey[Path]()
+
+
+@pytest.fixture(scope="session")
+def workdir(pytestconfig):
+    return pytestconfig.stash[WORKDIR]
 
 
 @pytest.fixture(scope="session")

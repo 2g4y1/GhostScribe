@@ -3,6 +3,7 @@ Console window of the web version: the server runs in a child process, its outpu
 always stays at the bottom, and R restarts the server (new code and .env) without closing the window.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ import webbrowser
 
 from dotenv import load_dotenv
 
+from ghostscribe import keys
 from ghostscribe.i18n import translate
 from ghostscribe.utils import APP_URL, BANNER, HOST, PORT
 
@@ -24,20 +26,26 @@ CONFIRM_SECONDS = 10  # time to confirm a restart
 BUSY_MESSAGES = {"recording": "terminal.restart_busy_recording", "processing": "terminal.restart_busy_processing"}
 
 
-def _enable_escape_sequences() -> bool:
-    """Lets the console move the cursor (needed to keep the banner at the bottom)."""
-    if not sys.stdout.isatty():
-        return False
-    if os.name != "nt":
-        return True
-    import ctypes
+if sys.platform == "win32":
 
-    kernel32 = ctypes.windll.kernel32
-    handle = kernel32.GetStdHandle(-11)  # standard output
-    mode = ctypes.c_uint32()
-    if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-        return False
-    return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    def _enable_escape_sequences() -> bool:
+        """Lets the console move the cursor (needed to keep the banner at the bottom)."""
+        if not sys.stdout.isatty():
+            return False
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)  # standard output
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+
+else:
+
+    def _enable_escape_sequences() -> bool:
+        """Terminals on Linux and macOS understand the cursor movements that keep the banner at the bottom."""
+        return sys.stdout.isatty()
 
 
 class Footer:
@@ -79,20 +87,16 @@ class Footer:
         sys.stdout.flush()
 
 
-def _keys_supported() -> bool:
-    return os.name == "nt" and sys.stdin.isatty()
-
-
 def footer_lines() -> list[str]:
-    keys = translate("terminal.keys") if _keys_supported() else translate("terminal.stop_hint")
-    return [SEPARATOR, BANNER, translate("terminal.web_ui_footer", url=APP_URL), keys, SEPARATOR]
+    hint = translate("terminal.keys") if keys.supported() else translate("terminal.stop_hint")
+    return [SEPARATOR, BANNER, translate("terminal.web_ui_footer", url=APP_URL), hint, SEPARATOR]
 
 
 def server_status() -> str | None:
     """Status of the running server ("idle", "recording", ...) or None if it does not answer."""
     request = urllib.request.Request(f"http://{HOST}:{PORT}/api/status", headers={"Host": f"localhost:{PORT}"})
     try:
-        with urllib.request.urlopen(request, timeout=3) as response:
+        with urllib.request.urlopen(request, timeout=3) as response:  # noqa: S310 (fixed local http URL)
             return json.load(response).get("status")
     except (OSError, ValueError):
         return None
@@ -108,24 +112,15 @@ def _open_browser_when_ready(footer: Footer) -> None:
 
 
 def _listen_for_keys(on_restart) -> None:
-    import msvcrt
-
     while True:
-        if msvcrt.getwch().lower() == "r":
+        if keys.wait_for_key() == "r":
             on_restart()
 
 
 def _confirm(footer: Footer) -> bool:
     """R is pressed quickly by mistake: the restart needs J (or Y) within CONFIRM_SECONDS."""
-    import msvcrt
-
     footer.print(translate("terminal.restart_confirm", seconds=CONFIRM_SECONDS))
-    deadline = time.monotonic() + CONFIRM_SECONDS
-    while time.monotonic() < deadline:
-        if msvcrt.kbhit():
-            return msvcrt.getwch().lower() in ("j", "y")
-        time.sleep(0.05)
-    return False
+    return keys.wait_for_key(CONFIRM_SECONDS) in ("j", "y")
 
 
 def _start_server() -> subprocess.Popen:
@@ -163,9 +158,15 @@ def _stop(server: subprocess.Popen) -> None:
 
 def run() -> int:
     """Runs the server until Ctrl+C or until it ends by itself; returns its exit code."""
+    with keys.reading_keys() if keys.supported() else contextlib.nullcontext():
+        return _run()
+
+
+def _run() -> int:
     footer = Footer()
     footer.show(footer_lines())
-    footer.print(translate("terminal.cli_tip", command="python -m ghostscribe --cli"))
+    command = "start.bat --cli" if sys.platform == "win32" else "sh start.sh --cli"
+    footer.print(translate("terminal.cli_tip", command=command))
     if not os.getenv("GEMINI_API_KEY", "").strip():
         footer.print(translate("terminal.no_api_key"))
     restart = threading.Event()
@@ -179,7 +180,7 @@ def run() -> int:
         else:
             footer.print(translate("terminal.restart_cancelled"))
 
-    if _keys_supported():
+    if keys.supported():
         threading.Thread(target=_listen_for_keys, args=(request_restart,), daemon=True).start()
     threading.Thread(target=_open_browser_when_ready, args=(footer,), daemon=True).start()
 

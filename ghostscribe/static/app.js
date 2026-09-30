@@ -884,7 +884,7 @@
     });
 
     // Toggle Record
-    const selectedDevice = (select) => (select.value === "" ? null : Number(select.value));
+    const selectedDevice = (select) => (select.value === "" ? null : select.value);
 
     recordToggleBtn.addEventListener("click", async () => {
       if (contextRecording && !isBusy()) {
@@ -1653,8 +1653,8 @@
       }
     }
 
-    // Audio devices: "" = Windows default, otherwise the device index
-    const deviceLabel = (name) => name.replace(" [Loopback]", "");
+    // Audio devices: "" = the default device of the system, otherwise the device id
+    const deviceLabel = (name) => name.replace(" [Loopback]", "").replace(/^Monitor of /, "");
 
     // Replaces only the options: the <button> in front of them shows the (truncated) selection
     function setDeviceOptions(select, options) {
@@ -1666,10 +1666,10 @@
       const saved = localStorage.getItem(storageKey) || "";
       const defaultDevice = devices.find(d => d.default);
       setDeviceOptions(select, [
-        new Option(defaultDevice ? t("devices.default", { name: deviceLabel(defaultDevice.name) }) : t("devices.windows_default"), ""),
-        ...devices.filter(d => !d.default).map(d => new Option(deviceLabel(d.name), String(d.index))),
+        new Option(defaultDevice ? t("devices.default", { name: deviceLabel(defaultDevice.name) }) : t("devices.system_default"), ""),
+        ...devices.filter(d => !d.default).map(d => new Option(deviceLabel(d.name), d.id)),
       ]);
-      select.value = devices.some(d => !d.default && String(d.index) === saved) ? saved : "";
+      select.value = devices.some(d => !d.default && d.id === saved) ? saved : "";
     }
 
     async function loadDevices() {

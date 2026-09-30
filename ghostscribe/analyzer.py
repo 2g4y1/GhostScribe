@@ -5,29 +5,33 @@ and generates a structured meeting protocol including transcript, summary, and a
 """
 
 import itertools
-import json
 import logging
 import os
 import re
 import time
 import wave
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from typing import Any, Literal
 
 import numpy as np
 from google import genai
 from google.genai import errors, types
 
 from ghostscribe.i18n import LocalizedError
-from ghostscribe.utils import format_duration
+from ghostscribe.utils import format_duration, write_json_atomic, write_text_atomic
 from ghostscribe.voices import recognize_voices, voice_context
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-flash-latest"
+FALLBACK_MODELS = (DEFAULT_MODEL, "gemini-3-flash-preview", "gemini-2.5-flash")  # tried after the configured model
+
+MeetingType = Literal["standard", "sprint", "sales", "interview", "brainstorming"]
 
 # Additional instructions per meeting type
-MEETING_TYPE_FOCUS = {
+MEETING_TYPE_FOCUS: dict[str, str] = {
     "standard": "Fokus: Ergebnisse, Beschlüsse und Aufgaben. Kein Zusatzabschnitt.",
     "sprint": (
         "Fokus: Status je Ticket bzw. Arbeitspaket, Blocker, Abhängigkeiten, technische Architektur- und "
@@ -76,9 +80,9 @@ def extract_title_from_markdown(markdown_text: str, fallback: str = "") -> str:
     if not markdown_text:
         return fallback
     for line in markdown_text.splitlines():
-        line = line.strip()
-        if line.startswith("#"):
-            raw_title = line.lstrip("#").strip()
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            raw_title = stripped.lstrip("#").strip()
             clean_title = _TITLE_PREFIX.sub("", raw_title).strip()
             if clean_title:
                 return clean_title
@@ -234,6 +238,11 @@ _PROMPT_VARIANTS = {
 }
 
 
+def default_ai_act_mode() -> bool:
+    """AI_ACT_MODE from .env: the EU AI Act compliant mode unless it is explicitly "false"."""
+    return os.getenv("AI_ACT_MODE", "true").strip().lower() != "false"
+
+
 def get_system_instruction(ai_act_mode: bool = True) -> str:
     """Returns the system prompt for the EU AI Act mode (default) or the extended sentiment mode."""
     prompt = _SYSTEM_PROMPT_TEMPLATE.format(**_PROMPT_VARIANTS[bool(ai_act_mode)])
@@ -338,8 +347,8 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         if num_chunks == 0:
             return ""
 
-        raw_segments = []
-        current_label = None
+        raw_segments: list[tuple[str, float, float]] = []
+        current_label: str | None = None
         seg_start = 0.0
 
         for i, lbl in enumerate(_channel_labels(_chunk_levels(data, chunk_len))):
@@ -352,7 +361,7 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         if current_label and current_label != "SILENCE":
             raw_segments.append((current_label, seg_start, num_chunks * chunk_sec))
 
-        merged = []
+        merged: list[tuple[str, float, float]] = []
         for lbl, s, e in raw_segments:
             if (e - s) < 0.8:
                 continue
@@ -384,17 +393,180 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         return ""
 
 
+GENERIC_TITLES = ("teams besprechung", "besprechung", "meeting", "call", "standard")
+PROCESSING_TIMEOUT = 600  # seconds Google may take to process an uploaded recording
+PROCESSING_POLL = 2  # seconds between two checks
+
+
+def build_user_prompt(
+    title_text: str,
+    meeting_date: str,
+    duration: str,
+    meeting_type: str,
+    user_label: str,
+    participants: str | None,
+    channel_analysis: str,
+    voices: list[dict],
+    chat_text: str | None,
+    image_count: int,
+) -> str:
+    """The request for one recording: context, focus of the meeting type, channel timeline, voices, chat, slides."""
+    specific_focus = MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
+    channel_block = ""
+    if channel_analysis:
+        channel_block = f"""
+<hardware_kanal_analyse>
+WICHTIGSTE PHYSIKALISCHE BODENWAHRHEIT ZUR SPRECHERZUORDNUNG:
+Die Aufnahme hat zwei getrennte Kanäle: Kanal 0 = lokales Mikrofon des Nutzers ('{user_label}'),
+Kanal 1 = Systemton mit den Remote-Teilnehmern (Teams/Zoom).
+
+{channel_analysis}
+
+VERBINDLICHE REGELN FÜR DIESE AUFNAHME:
+1. Äußerungen in M-Phasen stammen vom Nutzer ('{user_label}'), Äußerungen in S-Phasen von Remote-Teilnehmern.
+2. Ordne dem Nutzer keine Äußerung aus einer S-Phase zu – auch nicht, wenn dort sein Name fällt:
+   Wer „Danke, …“ oder „Bis morgen, …“ sagt, spricht den Nutzer an.
+3. Ordne einem Remote-Teilnehmer niemals den Namen des Nutzers zu. Ohne bekannten Namen heißt er „Kollege“ oder „Sprecher A“.
+</hardware_kanal_analyse>
+"""
+
+    user_prompt = f"""Erstelle das Protokoll zur beigefügten Aufnahme.
+
+<kontext>
+Titel: {title_text}
+Datum: {meeting_date}
+Dauer: {duration}
+Besprechungstyp: {meeting_type}
+Nutzer (Headset-Mikrofon): {user_label}
+Weitere Teilnehmer: {participants or "keine Angaben"}
+</kontext>
+
+<typ_schwerpunkt>
+{specific_focus}
+</typ_schwerpunkt>
+{channel_block}{voice_context(voices)}
+"""
+
+    if chat_text and chat_text.strip():
+        user_prompt += f"""
+
+<zusatz_chatverlauf>
+{chat_text.strip()}
+</zusatz_chatverlauf>
+Berücksichtige diesen Chatverlauf und geteilte Notizen bei Beschlüssen, Action Items, Links, Zahlen und Fragestellungen!
+"""
+
+    if image_count:
+        user_prompt += f"""
+
+BEIGEFÜGTE SCREENSHOTS / PRÄSENTATIONSFOLIEN ({image_count} Bild(er)):
+Die beigefügten Bilder zeigen geteilte Bildschirminhalte / Folien aus dem Meeting.
+Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbinde sie mit den Aussagen der Sprecher.
+"""
+    return user_prompt
+
+
+def response_markdown(response: Any) -> str:
+    """The text of the answer; an answer without text leaves a note in the minutes."""
+    markdown_content = response.text or ""
+    if not markdown_content and getattr(response, "candidates", None):
+        parts = [
+            part.text
+            for candidate in response.candidates
+            if candidate.content and candidate.content.parts
+            for part in candidate.content.parts
+            if getattr(part, "text", None)
+        ]
+        markdown_content = "\n".join(parts)
+    if not markdown_content:
+        markdown_content = "*(Keine Zusammenfassung generiert. Die Audiodatei war möglicherweise zu kurz, enthielt keine Sprache oder wurde gefiltert.)*"
+    return markdown_content
+
+
+def recording_duration(audio_filepath: str) -> str:
+    """HH:MM:SS of the WAV original (or the file itself), "nicht genannt" if it cannot be read."""
+    try:
+        with wave.open(find_wav(audio_filepath) or audio_filepath, "rb") as wf:
+            return format_duration(wf.getnframes() / wf.getframerate())
+    except (OSError, EOFError, wave.Error):
+        return "nicht genannt"
+
+
+Report = Callable[..., None]  # report(key, **params): progress as a translation key of the locale files
+
+
 class MeetingAnalyzer:
-    def __init__(self, api_key=None, model=None, meetings_dir="meetings"):
+    def __init__(self, api_key=None, model=None, meetings_dir="meetings", client=None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
         self.meetings_dir = meetings_dir
-        os.makedirs(self.meetings_dir, exist_ok=True)
 
         if not self.api_key:
             raise LocalizedError("error.no_api_key")
 
-        self.client = genai.Client(api_key=self.api_key)
+        os.makedirs(self.meetings_dir, exist_ok=True)
+        self.client = client or genai.Client(api_key=self.api_key)
+
+    def _upload_audio(self, audio_filepath: str, uploaded: list, report: Report) -> Any:
+        """Uploads the recording and waits until Google has processed it."""
+        report("step.uploading_audio", name=os.path.basename(audio_filepath))
+        uploaded_file = self.client.files.upload(file=audio_filepath)
+        uploaded.append(uploaded_file)
+        report("step.upload_done")
+
+        deadline = time.monotonic() + PROCESSING_TIMEOUT
+        while getattr(uploaded_file.state, "name", None) == "PROCESSING":
+            if time.monotonic() > deadline:
+                raise LocalizedError("error.google_processing_timeout", minutes=PROCESSING_TIMEOUT // 60)
+            report("step.gemini_processing")
+            time.sleep(PROCESSING_POLL)
+            uploaded_file = self.client.files.get(name=uploaded_file.name or "")
+
+        if getattr(uploaded_file.state, "name", None) == "FAILED":
+            raise LocalizedError("error.google_processing_failed", error=uploaded_file.error)
+        return uploaded_file
+
+    def _upload_images(self, image_filepaths: list[str], uploaded: list, report: Report) -> list:
+        """Uploads the slides and screenshots; one that fails is left out."""
+        images = []
+        for idx, img_path in enumerate(image_filepaths):
+            if not os.path.exists(img_path):
+                continue
+            name = os.path.basename(img_path)
+            report("step.uploading_image", index=idx + 1, total=len(image_filepaths), name=name)
+            try:
+                image = self.client.files.upload(file=img_path)
+            except Exception as img_err:
+                report("step.image_upload_failed", name=name, error=img_err)
+                continue
+            images.append(image)
+            uploaded.append(image)
+        return images
+
+    def _generate(self, contents: list, ai_act_mode: bool, report: Report) -> Any:
+        """Asks the configured model first, then the fallback models."""
+        last_error = None
+        instruction = get_system_instruction(ai_act_mode)
+        for current_model in dict.fromkeys([self.model, *FALLBACK_MODELS]):
+            try:
+                report("step.requesting", model=current_model)
+                response = self.client.models.generate_content(
+                    model=current_model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=instruction,
+                        temperature=0.2,
+                        # No tools are used; also avoids the SDK's AFC warning on every request
+                        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                    ),
+                )
+            except Exception as e:
+                report("step.model_failed", model=current_model, error=e)
+                last_error = e
+                continue
+            self.model = current_model
+            return response
+        raise LocalizedError("error.all_models_failed", error=last_error)
 
     def analyze_meeting(
         self,
@@ -421,14 +593,8 @@ class MeetingAnalyzer:
             raise LocalizedError("error.audio_file_missing", path=audio_filepath)
 
         user_label = user_name.strip() if user_name and user_name.strip() else "Ich"
-        uploaded_remote_files = []
-
-        if not duration:
-            try:
-                with wave.open(find_wav(audio_filepath) or audio_filepath, "rb") as wf:
-                    duration = format_duration(wf.getnframes() / wf.getframerate())
-            except Exception:
-                duration = "nicht genannt"
+        duration = duration or recording_duration(audio_filepath)
+        uploaded_remote_files: list = []
 
         def report(key, **params):
             if on_status_update:
@@ -444,37 +610,8 @@ class MeetingAnalyzer:
             background.shutdown(wait=False)
 
         try:
-            report("step.uploading_audio", name=os.path.basename(audio_filepath))
-            uploaded_file = self.client.files.upload(file=audio_filepath)
-            uploaded_remote_files.append(uploaded_file)
-            report("step.upload_done")
-
-            # Wait while Gemini is still processing the file
-            while uploaded_file.state.name == "PROCESSING":
-                report("step.gemini_processing")
-                time.sleep(2)
-                uploaded_file = self.client.files.get(name=uploaded_file.name)
-
-            if uploaded_file.state.name == "FAILED":
-                raise LocalizedError("error.google_processing_failed", error=uploaded_file.error)
-
-            # Upload additional slides / screenshots
-            uploaded_images = []
-            if image_filepaths:
-                for idx, img_path in enumerate(image_filepaths):
-                    if os.path.exists(img_path):
-                        report(
-                            "step.uploading_image",
-                            index=idx + 1,
-                            total=len(image_filepaths),
-                            name=os.path.basename(img_path),
-                        )
-                        try:
-                            up_img = self.client.files.upload(file=img_path)
-                            uploaded_images.append(up_img)
-                            uploaded_remote_files.append(up_img)
-                        except Exception as img_err:
-                            report("step.image_upload_failed", name=os.path.basename(img_path), error=img_err)
+            uploaded_file = self._upload_audio(audio_filepath, uploaded_remote_files, report)
+            uploaded_images = self._upload_images(image_filepaths or [], uploaded_remote_files, report)
 
             voices = []
             if recognition:
@@ -487,123 +624,29 @@ class MeetingAnalyzer:
                     logger.warning("Voice recognition failed: %s", e)
                     report("step.voice_recognition_failed", error=e)
 
-            specific_focus = MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
-
             clean_input_title = (meeting_title or "").strip()
-            is_generic_title = not clean_input_title or clean_input_title.lower() in [
-                "teams besprechung",
-                "besprechung",
-                "meeting",
-                "call",
-                "standard",
-            ]
+            is_generic_title = not clean_input_title or clean_input_title.lower() in GENERIC_TITLES
             title_text = (
                 clean_input_title
                 if not is_generic_title
                 else "Nicht vorgegeben (Bitte extrahiere ein prägnantes, aussagekräftiges Hauptthema 3-7 Wörter für die oberste '# 📝 Besprechungsprotokoll: <Titel>' Zeile!)"
             )
             meeting_start = recording_start(audio_filepath)
-            meeting_date = meeting_start.strftime("%d.%m.%Y, %H:%M Uhr")
+            user_prompt = build_user_prompt(
+                title_text=title_text,
+                meeting_date=meeting_start.strftime("%d.%m.%Y, %H:%M Uhr"),
+                duration=duration,
+                meeting_type=meeting_type,
+                user_label=user_label,
+                participants=participants,
+                channel_analysis=extract_channel_activity_summary(audio_filepath),
+                voices=voices,
+                chat_text=chat_text,
+                image_count=len(uploaded_images),
+            )
 
-            channel_analysis = extract_channel_activity_summary(audio_filepath)
-            channel_block = ""
-            if channel_analysis:
-                channel_block = f"""
-<hardware_kanal_analyse>
-WICHTIGSTE PHYSIKALISCHE BODENWAHRHEIT ZUR SPRECHERZUORDNUNG:
-Die Aufnahme hat zwei getrennte Kanäle: Kanal 0 = lokales Mikrofon des Nutzers ('{user_label}'),
-Kanal 1 = Systemton mit den Remote-Teilnehmern (Teams/Zoom).
-
-{channel_analysis}
-
-VERBINDLICHE REGELN FÜR DIESE AUFNAHME:
-1. Äußerungen in M-Phasen stammen vom Nutzer ('{user_label}'), Äußerungen in S-Phasen von Remote-Teilnehmern.
-2. Ordne dem Nutzer keine Äußerung aus einer S-Phase zu – auch nicht, wenn dort sein Name fällt:
-   Wer „Danke, …“ oder „Bis morgen, …“ sagt, spricht den Nutzer an.
-3. Ordne einem Remote-Teilnehmer niemals den Namen des Nutzers zu. Ohne bekannten Namen heißt er „Kollege“ oder „Sprecher A“.
-</hardware_kanal_analyse>
-"""
-
-            user_prompt = f"""Erstelle das Protokoll zur beigefügten Aufnahme.
-
-<kontext>
-Titel: {title_text}
-Datum: {meeting_date}
-Dauer: {duration}
-Besprechungstyp: {meeting_type}
-Nutzer (Headset-Mikrofon): {user_label}
-Weitere Teilnehmer: {participants or "keine Angaben"}
-</kontext>
-
-<typ_schwerpunkt>
-{specific_focus}
-</typ_schwerpunkt>
-{channel_block}{voice_context(voices)}
-"""
-
-            if chat_text and chat_text.strip():
-                user_prompt += f"""
-
-<zusatz_chatverlauf>
-{chat_text.strip()}
-</zusatz_chatverlauf>
-Berücksichtige diesen Chatverlauf und geteilte Notizen bei Beschlüssen, Action Items, Links, Zahlen und Fragestellungen!
-"""
-
-            if uploaded_images:
-                user_prompt += f"""
-
-BEIGEFÜGTE SCREENSHOTS / PRÄSENTATIONSFOLIEN ({len(uploaded_images)} Bild(er)):
-Die beigefügten Bilder zeigen geteilte Bildschirminhalte / Folien aus dem Meeting.
-Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbinde sie mit den Aussagen der Sprecher.
-"""
-
-            # Try the configured model first, then the fallback models
-            models_to_try = [self.model]
-            for fb in [DEFAULT_MODEL, "gemini-3-flash-preview", "gemini-2.5-flash"]:
-                if fb not in models_to_try:
-                    models_to_try.append(fb)
-
-            contents = [uploaded_file, *uploaded_images, user_prompt]
-
-            instruction_to_use = get_system_instruction(ai_act_mode)
-            response = None
-            last_error = None
-            for current_model in models_to_try:
-                try:
-                    report("step.requesting", model=current_model)
-                    response = self.client.models.generate_content(
-                        model=current_model,
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            system_instruction=instruction_to_use,
-                            temperature=0.2,
-                            # No tools are used; also avoids the SDK's AFC warning on every request
-                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                        ),
-                    )
-                    self.model = current_model
-                    break
-                except Exception as e:
-                    report("step.model_failed", model=current_model, error=e)
-                    last_error = e
-
-            if response is None:
-                raise LocalizedError("error.all_models_failed", error=last_error)
-
-            markdown_content = response.text or ""
-            if not markdown_content and hasattr(response, "candidates") and response.candidates:
-                parts = []
-                for candidate in response.candidates:
-                    if candidate.content and candidate.content.parts:
-                        for p in candidate.content.parts:
-                            if hasattr(p, "text") and p.text:
-                                parts.append(p.text)
-                markdown_content = "\n".join(parts)
-
-            if not markdown_content:
-                markdown_content = "*(Keine Zusammenfassung generiert. Die Audiodatei war möglicherweise zu kurz, enthielt keine Sprache oder wurde gefiltert.)*"
-
+            response = self._generate([uploaded_file, *uploaded_images, user_prompt], ai_act_mode, report)
+            markdown_content = response_markdown(response)
             if response.candidates and response.candidates[0].finish_reason == types.FinishReason.MAX_TOKENS:
                 report("step.output_truncated")
                 markdown_content += "\n\n> ⚠️ **Hinweis:** Das Protokoll wurde am Ausgabelimit des Modells abgeschnitten und ist unvollständig."
@@ -613,8 +656,7 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
             md_filename = os.path.join(self.meetings_dir, f"{base_name}.md")
             json_filename = os.path.join(self.meetings_dir, f"{base_name}.json")
 
-            with open(md_filename, "w", encoding="utf-8") as f:
-                f.write(markdown_content)
+            write_text_atomic(md_filename, markdown_content)
 
             extracted_title = extract_title_from_markdown(markdown_content)
             if is_generic_title and extracted_title:
@@ -639,8 +681,7 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
                 "attachments": list(image_filepaths or []),
                 "voices": voices,
             }
-            with open(json_filename, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
+            write_json_atomic(json_filename, metadata)
 
             return {
                 "markdown_content": markdown_content,

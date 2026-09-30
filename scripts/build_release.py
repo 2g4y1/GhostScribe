@@ -27,10 +27,10 @@ FORBIDDEN = re.compile(r"(^|/)\.env$|\.(wav|mp3|flac)$|^(recordings|meetings|mod
 
 
 def project_version() -> str:
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    match = re.search(r'^version = "([^"]+)"', pyproject, re.MULTILINE)
+    init = (ROOT / PACKAGE_DIR / "__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'^__version__ = "([^"]+)"', init, re.MULTILINE)
     if not match:
-        sys.exit("No version found in pyproject.toml")
+        sys.exit("No __version__ found in ghostscribe/__init__.py")
     return match.group(1)
 
 
