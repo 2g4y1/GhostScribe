@@ -261,7 +261,7 @@
     /* Device Status Card */
     .devices-bar {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 1.25rem;
     }
 
@@ -280,8 +280,10 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 1rem;
     }
 
+    /* The label stays on one line; the device select shrinks and truncates instead */
     .device-title {
       display: flex;
       align-items: center;
@@ -289,6 +291,7 @@
       font-size: 0.9rem;
       font-weight: 600;
       color: var(--text-main);
+      white-space: nowrap;
     }
 
     .user-name-wrapper {
@@ -1989,7 +1992,7 @@
         gap: 1.25rem;
       }
       .devices-bar {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 1rem;
       }
       .content-grid {
@@ -2028,6 +2031,9 @@
       }
       .meta-inputs-grid {
         grid-template-columns: 1fr;
+      }
+      .device-header {
+        flex-wrap: wrap;
       }
       .console-card {
         padding: 2rem 1.25rem;

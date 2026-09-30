@@ -287,7 +287,7 @@ class MeetingRecorder:
 
     @staticmethod
     def compress_to_mp3(wav_filepath, bitrate="96k"):
-        """Compresses WAV to MP3 using local ffmpeg (reduces file size by 85-90%)."""
+        """Compresses the WAV to MP3 with a local ffmpeg (96 instead of 512 kbit/s, about 80 % smaller)."""
         if not os.path.exists(wav_filepath):
             return wav_filepath
         mp3_filepath = os.path.splitext(wav_filepath)[0] + ".mp3"
