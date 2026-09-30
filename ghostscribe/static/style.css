@@ -41,10 +41,10 @@
       --bg-card-hover: rgba(26, 34, 54, 0.85);
       --border-card: rgba(255, 255, 255, 0.08);
       --border-accent: rgba(99, 102, 241, 0.3);
-      
+
       --text-main: #f1f5f9;
       --text-muted: #94a3b8;
-      --text-sub: #64748b;
+      --text-sub: #7c8aa0; /* at least 4.5:1 on every background (WCAG AA) */
 
       --primary: #6366f1;
       --primary-glow: rgba(99, 102, 241, 0.4);
@@ -151,7 +151,7 @@
     body {
       font-family: 'Plus Jakarta Sans', sans-serif;
       background-color: var(--bg-dark);
-      background-image: 
+      background-image:
         radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.12) 0%, transparent 40%),
         radial-gradient(circle at 85% 20%, rgba(6, 182, 212, 0.08) 0%, transparent 45%),
         radial-gradient(circle at 50% 85%, rgba(244, 63, 94, 0.06) 0%, transparent 50%);
@@ -1045,6 +1045,7 @@
     }
 
     .attachments-badge {
+      display: inline-block;
       background: linear-gradient(135deg, var(--primary), var(--cyan));
       color: white;
       font-size: 0.7rem;
@@ -2476,6 +2477,10 @@
       line-height: 1.4;
     }
 
+    .form-hint.success {
+      color: var(--emerald);
+    }
+
     .form-input {
       background: rgba(15, 23, 42, 0.85);
       border: 1px solid var(--border-card);
@@ -2587,6 +2592,17 @@
       justify-content: flex-end;
       gap: 0.75rem;
       margin-top: 0.5rem;
+    }
+
+    .app-version {
+      margin-right: auto;
+      align-self: center;
+      font-size: 0.72rem;
+      color: var(--text-sub);
+    }
+
+    .app-version:empty {
+      display: none;
     }
 
     /* Two equally wide and high decision buttons side by side */
@@ -2789,6 +2805,7 @@
       box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2);
     }
     .att-tab-badge {
+      display: inline-block;
       background: rgba(255, 255, 255, 0.12);
       color: white;
       font-size: 0.68rem;

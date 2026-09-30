@@ -4,9 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GhostScribe</title>
+  <meta name="description" content="Bot-free meeting recorder that turns Teams and Zoom calls into structured minutes">
+  <meta name="color-scheme" content="dark">
   <script src="/static/vendor/marked.umd.js" defer></script>
   <script src="/static/vendor/purify.min.js" defer></script>
-  <script src="/static/i18n.js" defer></script>
+  <script src="/static/app.js" type="module"></script>
   <link rel="icon" type="image/png" href="/static/logo.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="manifest" href="/static/manifest.json">
@@ -19,7 +21,7 @@
   <header>
     <a href="#" class="brand">
       <div class="brand-icon">
-        <img src="/static/logo.png" class="brand-logo-img" data-i18n-alt="header.logo_alt" draggable="false" />
+        <img src="/static/logo.png" class="brand-logo-img" data-i18n-alt="header.logo_alt" draggable="false" width="44" height="44" />
       </div>
       <div class="brand-text">
         <h1>GhostScribe</h1>
@@ -36,7 +38,7 @@
         </button>
       </div>
 
-      <button id="settingsBtn" class="btn-secondary" data-i18n-title="header.settings" data-i18n-aria-label="header.settings">
+      <button type="button" id="settingsBtn" class="btn-secondary" data-i18n-title="header.settings" data-i18n-aria-label="header.settings">
         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -97,12 +99,12 @@
       <div id="timerDisplay" class="timer-display">00:00:00</div>
 
       <div class="title-input-wrapper">
-        <input type="text" id="meetingTitleInput" class="title-input" data-i18n-placeholder="console.title_placeholder" />
+        <input type="text" id="meetingTitleInput" class="title-input" maxlength="200" data-i18n-placeholder="console.title_placeholder" data-i18n-aria-label="console.title_label" />
         <div class="meta-inputs-grid">
           <div id="participantsField" class="sub-input participants-field">
-            <input type="text" id="meetingParticipantsInput" class="participants-input" data-i18n-placeholder="console.participants_placeholder" />
+            <input type="text" id="meetingParticipantsInput" class="participants-input" data-i18n-placeholder="console.participants_placeholder" data-i18n-aria-label="console.participants_label" />
           </div>
-          <select id="meetingTypeSelect" class="sub-input">
+          <select id="meetingTypeSelect" class="sub-input" data-i18n-aria-label="console.type_label">
             <option value="standard" data-i18n="type.standard"></option>
             <option value="sprint" data-i18n="type.sprint"></option>
             <option value="sales" data-i18n="type.sales"></option>
@@ -120,7 +122,7 @@
             <span class="toggle-icon">📎</span>
             <span class="toggle-title" data-i18n="attachments.title"></span>
             <span class="toggle-sub" data-i18n="attachments.optional"></span>
-            <span id="attachmentsCountBadge" class="attachments-badge" style="display: none;"></span>
+            <span id="attachmentsCountBadge" class="attachments-badge" hidden></span>
           </div>
           <div class="toggle-right">
             <span class="toggle-hint" data-i18n="attachments.paste_active"></span>
@@ -128,7 +130,7 @@
           </div>
         </button>
 
-        <div class="attachments-panel" id="attachmentsPanel" style="display: none;">
+        <div class="attachments-panel" id="attachmentsPanel" hidden>
           <!-- Segmented Tab Switcher -->
           <div class="attachments-tabs">
             <button type="button" class="att-tab-btn active" id="attTabBoth" data-tab="both">
@@ -139,7 +141,7 @@
             </button>
             <button type="button" class="att-tab-btn" id="attTabImages" data-tab="images">
               <span data-i18n="attachments.tab_images"></span>
-              <span id="tabImgCount" class="att-tab-badge" style="display: none;">0</span>
+              <span id="tabImgCount" class="att-tab-badge" hidden>0</span>
             </button>
           </div>
 
@@ -147,10 +149,10 @@
             <!-- Left: chat history & notes -->
             <div class="attachment-col" id="colChat">
               <div class="col-header">
-                <span class="col-title" data-i18n="attachments.chat_title"></span>
+                <span id="chatTitle" class="col-title" data-i18n="attachments.chat_title"></span>
                 <span class="col-sub" data-i18n="attachments.chat_sources"></span>
               </div>
-              <textarea id="chatInput" class="chat-textarea" rows="4" data-i18n-placeholder="attachments.chat_placeholder"></textarea>
+              <textarea id="chatInput" class="chat-textarea" rows="4" aria-labelledby="chatTitle" data-i18n-placeholder="attachments.chat_placeholder"></textarea>
               <div class="chat-actions-bar">
                 <div class="chat-quick-actions">
                   <button type="button" id="pasteClipboardTextBtn" class="mini-action-btn" data-i18n-title="attachments.paste_title">
@@ -159,7 +161,7 @@
                   <button type="button" id="importTextFileBtn" class="mini-action-btn" data-i18n-title="attachments.import_title">
                     <span data-i18n="attachments.import"></span>
                   </button>
-                  <button type="button" id="clearChatBtn" class="text-btn" style="display: none;" data-i18n="attachments.clear"></button>
+                  <button type="button" id="clearChatBtn" class="text-btn" data-i18n="attachments.clear" hidden></button>
                 </div>
                 <span id="chatCharCount" class="char-count"></span>
               </div>
@@ -188,7 +190,7 @@
                 <input type="file" id="fileAttachmentInput" multiple accept="image/png,image/jpeg,image/webp,text/plain,.txt,.md,.log,.csv" hidden />
               </div>
 
-              <div id="thumbnailsContainer" class="thumbnails-grid" style="display: none;"></div>
+              <div id="thumbnailsContainer" class="thumbnails-grid" hidden></div>
             </div>
           </div>
         </div>
@@ -196,8 +198,8 @@
 
       <div class="record-actions-row">
         <div class="record-btn-container">
-          <div id="pulseRing" class="pulse-ring" style="display: none;"></div>
-          <button id="recordToggleBtn" class="record-btn start">
+          <div id="pulseRing" class="pulse-ring" hidden></div>
+          <button type="button" id="recordToggleBtn" class="record-btn start">
             <svg class="icon-record" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
             </svg>
@@ -208,17 +210,17 @@
           </button>
         </div>
 
-        <button id="cancelRecordBtn" class="cancel-btn" style="display: none;" data-i18n-title="record.discard_title">
+        <button type="button" id="cancelRecordBtn" class="cancel-btn" data-i18n-title="record.discard_title" hidden>
           <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
           <span data-i18n="record.discard"></span>
         </button>
-        <button id="laterBtn" class="btn-secondary" data-i18n="record.later" data-i18n-title="record.later_title" hidden></button>
+        <button type="button" id="laterBtn" class="btn-secondary" data-i18n="record.later" data-i18n-title="record.later_title" hidden></button>
       </div>
 
       <!-- Processing status banner -->
-      <div id="processingBanner" class="processing-banner" style="display: none;">
+      <div id="processingBanner" class="processing-banner" role="status" hidden>
         <div class="spinner"></div>
         <div>
           <strong class="processing-title" data-i18n="processing.title"></strong>
@@ -246,8 +248,8 @@
         </div>
         <div id="meetingsBody" class="meetings-body">
           <div class="search-input-wrapper">
-            <input type="text" id="searchInput" class="search-input" data-i18n-placeholder="sidebar.search_placeholder" />
-            <button id="clearSearchBtn" class="clear-search-btn" style="display: none;" data-i18n-title="sidebar.clear_search">✕</button>
+            <input type="text" id="searchInput" class="search-input" data-i18n-placeholder="sidebar.search_placeholder" data-i18n-aria-label="sidebar.search_label" />
+            <button type="button" id="clearSearchBtn" class="clear-search-btn" data-i18n-title="sidebar.clear_search" hidden>✕</button>
           </div>
           <div id="meetingsList" class="meetings-list"></div>
         </div>
@@ -263,24 +265,24 @@
               <button type="button" id="renameMeetingBtn" class="viewer-rename" data-i18n-title="viewer.rename" data-i18n-aria-label="viewer.rename">
                 <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
               </button>
-              <span id="searchMatchBadge" class="search-match-badge found" style="display: none;"></span>
+              <span id="searchMatchBadge" class="search-match-badge found" hidden></span>
             </div>
             <div id="viewMeta" class="viewer-meta"></div>
           </div>
           <div class="viewer-tools">
-            <button id="copyMdBtn" class="btn-secondary btn-primary-action" data-i18n-title="viewer.copy_title">
+            <button type="button" id="copyMdBtn" class="btn-secondary btn-primary-action" data-i18n-title="viewer.copy_title">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
               </svg>
               <span data-i18n="viewer.copy"></span>
             </button>
-            <button id="downloadMdBtn" class="btn-secondary" data-i18n-title="viewer.download_title">
+            <button type="button" id="downloadMdBtn" class="btn-secondary" data-i18n-title="viewer.download_title">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               <span data-i18n="viewer.download"></span>
             </button>
-            <button id="deleteMeetingBtn" class="btn-secondary btn-danger" data-i18n-title="sidebar.delete_meeting">
+            <button type="button" id="deleteMeetingBtn" class="btn-secondary btn-danger" data-i18n-title="sidebar.delete_meeting">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
@@ -293,7 +295,7 @@
         </div>
 
         <!-- Audio Player Section -->
-        <div id="audioPlayerSection" class="audio-player" style="display: none;">
+        <div id="audioPlayerSection" class="audio-player" hidden>
           <audio id="audioElement" preload="metadata"></audio>
           <button type="button" id="playPauseBtn" class="player-play" data-i18n-title="viewer.play" data-i18n-aria-label="viewer.play">
             <svg class="icon-play" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" /></svg>
@@ -322,13 +324,13 @@
 
   <!-- Settings Modal -->
   <div id="settingsModal" class="modal-overlay">
-    <div class="modal-card">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" tabindex="-1">
       <div class="modal-header">
-        <h2 class="modal-title" data-i18n="settings.title"></h2>
-        <button id="closeSettingsX" class="modal-close" data-i18n-title="common.close">✕</button>
+        <h2 id="settingsTitle" class="modal-title" data-i18n="settings.title"></h2>
+        <button type="button" id="closeSettingsX" class="modal-close" data-i18n-title="common.close">✕</button>
       </div>
 
-      <div id="welcomeBanner" class="welcome-banner" style="display: none;">
+      <div id="welcomeBanner" class="welcome-banner" hidden>
         <div class="welcome-header">
           <img src="/static/logo.png" class="welcome-logo" alt="" />
           <strong class="welcome-title" data-i18n="settings.welcome_title"></strong>
@@ -393,40 +395,41 @@
       </div>
 
       <div class="modal-actions">
-        <button id="closeSettingsBtn" class="btn-secondary" data-i18n="common.close"></button>
-        <button id="saveSettingsBtn" class="btn-secondary btn-primary" data-i18n="settings.save"></button>
+        <span id="appVersion" class="app-version"></span>
+        <button type="button" id="closeSettingsBtn" class="btn-secondary" data-i18n="common.close"></button>
+        <button type="button" id="saveSettingsBtn" class="btn-secondary btn-primary" data-i18n="settings.save"></button>
       </div>
     </div>
   </div>
 
   <!-- EU AI Act Warning / Sentiment Confirmation Modal -->
   <div id="sentimentConfirmModal" class="modal-overlay">
-    <div class="modal-card sentiment-warning-card">
+    <div class="modal-card sentiment-warning-card" role="alertdialog" aria-modal="true" aria-labelledby="sentimentTitle" aria-describedby="sentimentBody" tabindex="-1">
       <div class="modal-header">
         <div class="modal-title-group">
           <div class="warning-icon" aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
           </div>
           <div>
-            <h3 class="modal-title" data-i18n="sentiment.title"></h3>
+            <h3 id="sentimentTitle" class="modal-title" data-i18n="sentiment.title"></h3>
             <span class="warning-subtitle" data-i18n="sentiment.subtitle"></span>
           </div>
         </div>
-        <button id="closeSentimentModalX" class="modal-close" data-i18n-title="common.close">✕</button>
+        <button type="button" id="closeSentimentModalX" class="modal-close" data-i18n-title="common.close">✕</button>
       </div>
 
-      <div class="warning-body">
+      <div id="sentimentBody" class="warning-body">
         <div class="warning-box" data-i18n-html="sentiment.warning"></div>
         <p data-i18n="sentiment.description"></p>
         <p class="warning-note" data-i18n="sentiment.responsibility"></p>
       </div>
 
       <div class="modal-actions modal-actions-split">
-        <button id="cancelSentimentBtn" class="btn-secondary btn-choice-safe">
+        <button type="button" id="cancelSentimentBtn" class="btn-secondary btn-choice-safe">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></svg>
           <span data-i18n="sentiment.cancel"></span>
         </button>
-        <button id="confirmSentimentBtn" class="btn-secondary btn-choice-risk">
+        <button type="button" id="confirmSentimentBtn" class="btn-secondary btn-choice-risk">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
           <span data-i18n="sentiment.confirm"></span>
         </button>
@@ -435,9 +438,9 @@
   </div>
 
   <!-- Lightbox Modal for Screenshots -->
-  <div id="imageLightboxModal" class="lightbox-overlay" style="display: none;">
-    <div class="lightbox-content">
-      <button id="closeLightboxBtn" class="lightbox-close" data-i18n-title="lightbox.close">✕</button>
+  <div id="imageLightboxModal" class="lightbox-overlay" hidden>
+    <div class="lightbox-content" role="dialog" aria-modal="true" data-i18n-aria-label="attachments.preview_alt" tabindex="-1">
+      <button type="button" id="closeLightboxBtn" class="lightbox-close" data-i18n-title="lightbox.close">✕</button>
       <img id="lightboxImg" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" data-i18n-alt="attachments.preview_alt" />
       <div id="lightboxCaption" class="lightbox-caption"></div>
     </div>
@@ -445,7 +448,7 @@
 
   <!-- Messages and confirmations in the design of the page (instead of the browser's alert and confirm) -->
   <div id="dialogModal" class="modal-overlay">
-    <div class="modal-card dialog-card" role="alertdialog" aria-modal="true" aria-describedby="dialogMessage">
+    <div class="modal-card dialog-card" role="alertdialog" aria-modal="true" aria-describedby="dialogMessage" tabindex="-1">
       <p id="dialogMessage" class="dialog-message"></p>
       <div class="modal-actions">
         <button type="button" id="dialogCancel" class="btn-secondary" data-i18n="common.cancel"></button>
@@ -455,7 +458,6 @@
   </div>
 
   <!-- Toast Notification -->
-  <div id="toastNotification" class="toast-notification"></div>
-  <script src="/static/app.js" defer></script>
+  <div id="toastNotification" class="toast-notification" role="status" aria-live="polite"></div>
 </body>
 </html>

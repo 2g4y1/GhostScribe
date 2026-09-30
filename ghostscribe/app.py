@@ -143,7 +143,7 @@ CONTENT_SECURITY_POLICY = "; ".join(
     [
         "default-src 'self'",
         "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
+        "style-src 'self'",
         "img-src 'self' data:",
         "media-src 'self'",
         "font-src 'self'",
