@@ -35,7 +35,6 @@ desktop.ini
 *.swp
 *.swo
 
-# Test Audio & Scratch
-test_meeting.wav
+# Scratch & Tool Caches
 scratch/
 .ruff_cache/

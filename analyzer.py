@@ -268,15 +268,10 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         ]
         max_entries = 40
         for lbl, s, e in merged[:max_entries]:
-            who = (
-                "Nutzer (Lokales Mikrofon)"
-                if lbl == "MIC"
-                else (
-                    "Remote-Teilnehmer / Kollege (Systemton)"
-                    if lbl == "LOOP"
-                    else "Beide gleichzeitig / Übersprechen"
-                )
-            )
+            who = {
+                "MIC": "Nutzer (Lokales Mikrofon)",
+                "LOOP": "Remote-Teilnehmer / Kollege (Systemton)",
+            }.get(lbl, "Beide gleichzeitig / Übersprechen")
             ms, ss = int(s // 60), int(s % 60)
             me, se = int(e // 60), int(e % 60)
             lines.append(f"- [{ms:02d}:{ss:02d}–{me:02d}:{se:02d}]: {who}")

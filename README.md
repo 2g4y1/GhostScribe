@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="logo.png" alt="GhostScribe Logo" width="140" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); margin-bottom: 0.75rem;" />
+<img src="static/logo.png" alt="GhostScribe Logo" width="140" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); margin-bottom: 0.75rem;" />
 
 # 🎙️ GhostScribe
 
@@ -11,7 +11,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6?logo=windows&logoColor=white)](https://github.com)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![AI Engine](https://img.shields.io/badge/AI-Google%20Gemini%20Flash%20(Multimodal)-8E75C2?logo=google&logoColor=white)](https://ai.google.dev/)
-[![Stealth](https://img.shields.io/badge/Meeting%20Bot-None%20(100%25%20Invisible)-success)](#why-ghostscribe--the-botless-advantage)
+[![Stealth](https://img.shields.io/badge/Meeting%20Bot-None%20(100%25%20Invisible)-success)](#-why-ghostscribe-the-botless-advantage)
 [![Portability](https://img.shields.io/badge/Setup-Zero--Admin%20Portable-blue)](#-quickstart-for-windows)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 

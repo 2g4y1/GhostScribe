@@ -4,8 +4,8 @@
     let rawCurrentMarkdown = "";
     let hasSeenWelcomeModal = false;
     let hasApiKeyConfigured = false;
-    let maskedApiKey = "";
     let currentConfiguredModel = "gemini-flash-latest";
+    const API_KEY_MASK = "••••••••••••••••••••••••";
 
     function syncModelSelect(modelName) {
       if (!modelSelect || !modelName) return;
@@ -29,11 +29,6 @@
     const tabImgCount = document.getElementById("tabImgCount");
     const pasteClipboardTextBtn = document.getElementById("pasteClipboardTextBtn");
     const importTextFileBtn = document.getElementById("importTextFileBtn");
-
-    // Settings API Key Elements
-    const apiKeyStatusBadge = document.getElementById("apiKeyStatusBadge");
-    const apiKeyStatusText = document.getElementById("apiKeyStatusText");
-    const editApiKeyBtn = document.getElementById("editApiKeyBtn");
 
     // DOM Elements
     const statusBadge = document.getElementById("statusBadge");
@@ -185,15 +180,9 @@
         sentimentConfirmModal.classList.remove("active");
       }
       if (confirmed) {
-        if (pendingAiActSource === "toggle" || pendingAiActSource === null) {
-          if (aiActModeToggle) aiActModeToggle.checked = false;
-          if (defaultAiActSelect) defaultAiActSelect.value = "false";
-          updateAiActToggleUI();
-        } else if (pendingAiActSource === "settings") {
-          if (defaultAiActSelect) defaultAiActSelect.value = "false";
-          if (aiActModeToggle) aiActModeToggle.checked = false;
-          updateAiActToggleUI();
-        }
+        if (aiActModeToggle) aiActModeToggle.checked = false;
+        if (defaultAiActSelect) defaultAiActSelect.value = "false";
+        updateAiActToggleUI();
       } else {
         // Revert to true / safe compliant mode
         if (pendingAiActSource === "toggle" || pendingAiActSource === null) {
@@ -218,11 +207,6 @@
     if (sentimentConfirmModal) {
       sentimentConfirmModal.addEventListener("click", (e) => {
         if (e.target === sentimentConfirmModal) closeSentimentWarning(false);
-      });
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && sentimentConfirmModal.classList.contains("active")) {
-          closeSentimentWarning(false);
-        }
       });
     }
 
@@ -266,7 +250,7 @@
           apiKeyDot.className = "status-dot-mini green";
           apiKeyDot.title = "Gespeichert & Aktiv";
         }
-        apiKeyInput.value = "••••••••••••••••••••••••";
+        apiKeyInput.value = API_KEY_MASK;
         apiKeyInput.placeholder = "AIzaSy...";
         if (apiKeyHint) {
           apiKeyHint.innerHTML = "✅ Gespeichert &amp; Aktiv in deiner lokalen <code>.env</code> Datei.";
@@ -297,7 +281,7 @@
 
     apiKeyInput.addEventListener("blur", () => {
       if (!apiKeyInput.value.trim() && hasApiKeyConfigured) {
-        apiKeyInput.value = "••••••••••••••••••••••••";
+        apiKeyInput.value = API_KEY_MASK;
         apiKeyInput.placeholder = "AIzaSy...";
       }
     });
@@ -311,21 +295,20 @@
     if (closeSettingsX) closeSettingsX.addEventListener("click", closeModal);
 
     window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        if (sentimentConfirmModal && sentimentConfirmModal.classList.contains("active")) {
-          closeSentimentWarning(false);
-        } else if (settingsModal && settingsModal.classList.contains("active")) {
-          closeModal();
-        }
+      if (e.key !== "Escape") return;
+      if (imageLightboxModal && imageLightboxModal.style.display === "flex") {
+        closeLightbox();
+      }
+      if (sentimentConfirmModal && sentimentConfirmModal.classList.contains("active")) {
+        closeSentimentWarning(false);
+      } else if (settingsModal && settingsModal.classList.contains("active")) {
+        closeModal();
       }
     });
 
     saveSettingsBtn.addEventListener("click", async () => {
       const key = apiKeyInput.value.trim();
-      let model = modelSelect ? modelSelect.value : "";
-      if (!model) {
-        model = currentConfiguredModel || "gemini-flash-latest";
-      }
+      const model = modelSelect.value || currentConfiguredModel;
       const isMaskedOrEmpty = !key || key.includes("•") || key.includes("*");
 
       if (!hasApiKeyConfigured && isMaskedOrEmpty) {
@@ -616,12 +599,6 @@
         if (e.target === imageLightboxModal) closeLightbox();
       });
     }
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && imageLightboxModal && imageLightboxModal.style.display === "flex") {
-        closeLightbox();
-      }
-    });
-
     // Dropzone handlers
     if (dropZone && fileAttachmentInput) {
       dropZone.addEventListener("click", () => fileAttachmentInput.click());
@@ -825,20 +802,6 @@
       }
     });
 
-    // Copy Markdown (Layout-stable with flash effect)
-    copyMdBtn.addEventListener("click", async () => {
-      if (!rawCurrentMarkdown) return;
-      try {
-        await navigator.clipboard.writeText(rawCurrentMarkdown);
-        flashButton(copyMdBtn);
-        showToast("📋 Markdown-Protokoll in Zwischenablage kopiert!");
-      } catch (e) {
-        console.error("Kopieren fehlgeschlagen:", e);
-        showToast("❌ Kopieren fehlgeschlagen");
-      }
-    });
-
-    // Elements for Share Dropdown Menu
     // Smart 1-Click Copy: Formatted Rich HTML (Teams, Outlook, Slack, Word) + Clean Markdown (Notepad, Code)
     copyMdBtn.addEventListener("click", async () => {
       if (!rawCurrentMarkdown) return;
@@ -1028,7 +991,7 @@
 
     async function deleteMeetingPrompt(id, title) {
       const displayTitle = title || id;
-      if (!confirm(`Möchtest du das Meeting "${displayTitle}" und die zugehörige Audiodatei wirklich löschen?`)) {
+      if (!confirm(`Möchtest du das Meeting "${displayTitle}" samt Audiodateien (MP3 + WAV) und Screenshots endgültig löschen?`)) {
         return;
       }
       try {
@@ -1313,7 +1276,6 @@
           teamsVuFill.style.width = Math.min(100, Math.round(data.loopback_level * 100 * 1.5)) + "%";
 
           hasApiKeyConfigured = data.has_api_key;
-          maskedApiKey = data.masked_api_key || "";
           if (!data.has_api_key) {
             if (!hasSeenWelcomeModal) {
               hasSeenWelcomeModal = true;

@@ -11,15 +11,7 @@ Strictly excludes:
 """
 
 import os
-import sys
 import zipfile
-
-# Ensure robust UTF-8 printing on Windows command line
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
 
 OUTPUT_ZIP = "GhostScribe_Portable.zip"
 
@@ -29,6 +21,7 @@ INCLUDED_ROOT_FILES = [
     "recorder.py",
     "analyzer.py",
     "cli.py",
+    "utils.py",
     "list_devices.py",
     "requirements.txt",
     "start.bat",
@@ -40,7 +33,6 @@ INCLUDED_ROOT_FILES = [
     ".env.example",
     "README.md",
     "LICENSE",
-    "logo.png",
 ]
 
 INCLUDED_DIRS = {

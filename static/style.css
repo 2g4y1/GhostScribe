@@ -895,14 +895,6 @@
       box-shadow: 0 0 10px var(--primary-glow);
     }
 
-    .col-footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.7rem;
-      color: var(--text-sub);
-    }
-
     .text-btn {
       background: none;
       border: none;
@@ -1052,70 +1044,6 @@
     .toast-notification.show {
       transform: translateX(-50%) translateY(0);
       opacity: 1;
-    }
-
-    /* Share Dropdown Menu */
-    .share-dropdown-container {
-      position: relative;
-      display: inline-block;
-    }
-
-    .share-menu {
-      position: absolute;
-      top: calc(100% + 6px);
-      left: 0;
-      background: #1e293b;
-      border: 1px solid var(--border-accent);
-      border-radius: 12px;
-      padding: 0.4rem;
-      min-width: 260px;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
-      z-index: 50;
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      animation: menuFadeIn 0.15s ease-out;
-    }
-
-    @keyframes menuFadeIn {
-      from { opacity: 0; transform: translateY(-4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .share-menu-item {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.6rem 0.75rem;
-      border-radius: 8px;
-      background: transparent;
-      border: none;
-      color: #f8fafc;
-      text-align: left;
-      cursor: pointer;
-      font-family: inherit;
-      transition: background 0.15s ease;
-      width: 100%;
-    }
-
-    .share-menu-item:hover {
-      background: rgba(255, 255, 255, 0.08);
-    }
-
-    .share-menu-icon {
-      font-size: 1.15rem;
-      flex-shrink: 0;
-    }
-
-    .share-menu-title {
-      font-size: 0.84rem;
-      font-weight: 600;
-      color: #fff;
-    }
-
-    .share-menu-desc {
-      font-size: 0.7rem;
-      color: var(--text-sub);
     }
 
     .lightbox-overlay {
@@ -1346,8 +1274,7 @@
       flex-wrap: nowrap;
       flex-shrink: 0;
     }
-    .viewer-tools .btn-secondary,
-    .viewer-tools .btn-primary {
+    .viewer-tools .btn-secondary {
       min-width: 90px;
       height: 32px;
       padding: 0 0.75rem;
@@ -1773,7 +1700,7 @@
         gap: 0.75rem;
         align-items: stretch;
       }
-      .header-controls {
+      .header-actions {
         justify-content: space-between;
       }
       .container {

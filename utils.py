@@ -3,10 +3,21 @@ Shared helpers and constants for GhostScribe.
 """
 
 import os
+import sys
 
 HOST = "127.0.0.1"
 PORT = 8765
 APP_URL = f"http://localhost:{PORT}"
+
+
+def ensure_utf8_console() -> None:
+    """Switches stdout/stderr to UTF-8 so emoji output works in every Windows console and pipe."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
 
 def format_duration(seconds: float) -> str:

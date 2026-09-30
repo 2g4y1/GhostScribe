@@ -6,6 +6,8 @@ import sys
 
 try:
     import pyaudiowpatch as pyaudio
+
+    from recorder import MeetingRecorder
 except ImportError:
     print("pyaudiowpatch is not installed yet.")
     sys.exit(1)
@@ -48,16 +50,7 @@ def main():
 
     # Standard Loopback
     try:
-        default_speakers = p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
-        default_loopback = None
-        if not default_speakers.get("isLoopbackDevice", False):
-            for loopback in p.get_loopback_device_info_generator():
-                if default_speakers["name"] in loopback["name"]:
-                    default_loopback = loopback
-                    break
-        else:
-            default_loopback = default_speakers
-
+        default_loopback = MeetingRecorder.find_loopback_device(p)
         if default_loopback:
             print("\n[WASAPI Loopback für Standard-Ausgabe (Teams-Ton)]")
             print(f"  Index: {default_loopback['index']}")

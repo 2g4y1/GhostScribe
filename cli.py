@@ -2,6 +2,7 @@
 Interactive CLI for GhostScribe Meeting Recorder
 """
 
+import msvcrt
 import os
 import time
 
@@ -9,8 +10,14 @@ from dotenv import load_dotenv
 
 from analyzer import MeetingAnalyzer
 from recorder import MeetingRecorder
+from utils import ensure_utf8_console, format_duration, update_env_file
 
 load_dotenv()
+
+
+def level_bar(level, width=15):
+    filled = int(level * width)
+    return "█" * filled + "░" * (width - filled)
 
 
 def main():
@@ -34,8 +41,7 @@ def main():
         api_input = input("   Möchtest du deinen API-Key jetzt eingeben? (Enter zum Überspringen): ").strip()
         if api_input:
             api_key = api_input
-            with open(".env", "a", encoding="utf-8") as f:
-                f.write(f"\nGEMINI_API_KEY={api_key}\n")
+            update_env_file({"GEMINI_API_KEY": api_key})
             print("   Key in .env gespeichert!")
 
     print("\n" + "-" * 60)
@@ -47,18 +53,13 @@ def main():
 
     try:
         while recorder.is_recording:
-            dur = int(recorder.get_duration())
-            mins, secs = divmod(dur, 60)
-            mic_bars = int(recorder.mic_level * 15)
-            loop_bars = int(recorder.loopback_level * 15)
-            mic_vis = "█" * mic_bars + "░" * (15 - mic_bars)
-            loop_vis = "█" * loop_bars + "░" * (15 - loop_bars)
-
-            print(f"⏱️  {mins:02d}:{secs:02d} | Mic: [{mic_vis}] | Teams: [{loop_vis}]", end="\r", flush=True)
+            print(
+                f"⏱️  {format_duration(recorder.get_duration())} | Mic: [{level_bar(recorder.mic_level)}] | Teams: [{level_bar(recorder.loopback_level)}]",
+                end="\r",
+                flush=True,
+            )
             time.sleep(0.15)
             # Check for key press on Windows without blocking
-            import msvcrt
-
             if msvcrt.kbhit():
                 key = msvcrt.getch()
                 if key in [b"\r", b"\n", b"q", b" "]:
@@ -97,4 +98,5 @@ def main():
 
 
 if __name__ == "__main__":
+    ensure_utf8_console()
     main()
