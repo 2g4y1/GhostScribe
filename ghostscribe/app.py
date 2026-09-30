@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ghostscribe.analyzer import DEFAULT_MODEL, MeetingAnalyzer, recording_start
+from ghostscribe.analyzer import DEFAULT_MODEL, MeetingAnalyzer, check_api_key, recording_start
 from ghostscribe.i18n import available_languages, configured_language, translate
 from ghostscribe.recorder import MeetingRecorder
 from ghostscribe.utils import APP_URL, PORT, format_duration, print_banner, update_env_file
@@ -707,9 +707,14 @@ def update_settings(req: SettingsRequest):
     updates = {}
     if req.model is not None:
         updates["GEMINI_MODEL"] = req.model.strip() or DEFAULT_MODEL
-    # Only update when a real key was sent, not the masked placeholder (• or *)
+    # Only update when a real key was sent, not the masked placeholder (• or *), and only one Google accepts
+    key_unchecked = False
     new_key = req.api_key.strip()
     if new_key and "•" not in new_key and "*" not in new_key:
+        valid = check_api_key(new_key)
+        if valid is False:
+            raise api_error(400, "api.api_key_rejected")
+        key_unchecked = valid is None
         updates["GEMINI_API_KEY"] = new_key
     if req.default_ai_act_mode is not None:
         updates["AI_ACT_MODE"] = "true" if req.default_ai_act_mode else "false"
@@ -729,4 +734,4 @@ def update_settings(req: SettingsRequest):
     except ValueError as e:
         raise api_error(400, "api.invalid_setting") from e
 
-    return {"success": True}
+    return {"success": True, "key_unchecked": key_unchecked}

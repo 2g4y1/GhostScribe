@@ -195,10 +195,10 @@ def test_recordings_are_split_into_parts_of_at_least_five_minutes():
     assert voices.part_count(76 * 60, workers=4) == 4
 
 
-def test_voice_workers_default_to_a_quarter_and_at_most_half_of_the_logical_processors(monkeypatch):
+def test_voice_workers_default_to_one_and_at_most_half_of_the_logical_processors(monkeypatch):
     monkeypatch.setattr(voices.os, "cpu_count", lambda: 16)
     monkeypatch.delenv("VOICE_WORKERS", raising=False)
-    assert voices.configured_workers() == 4
+    assert voices.configured_workers() == 1
 
     monkeypatch.setenv("VOICE_WORKERS", "6")
     assert voices.configured_workers() == 6

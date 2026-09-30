@@ -16,7 +16,7 @@ from datetime import datetime
 
 import numpy as np
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from ghostscribe.i18n import LocalizedError
 from ghostscribe.utils import format_duration
@@ -224,6 +224,19 @@ def get_system_instruction(ai_act_mode: bool = True) -> str:
     # Number the sections consecutively: "# §." -> "# 1.", "# 2.", ...
     numbers = itertools.count(1)
     return re.sub(r"^# §\.", lambda _: f"# {next(numbers)}.", prompt, flags=re.MULTILINE)
+
+
+def check_api_key(api_key: str) -> bool | None:
+    """Asks Google whether the key works (one entry of the model list, costs no tokens): True or False, None if
+    Google cannot be reached (the key is then checked by the first analysis)."""
+    try:
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=10_000))
+        next(iter(client.models.list(config={"page_size": 1})), None)
+    except errors.ClientError as e:
+        return False if e.code in (400, 401, 403) else None
+    except Exception:
+        return None
+    return True
 
 
 def find_wav(audio_filepath: str) -> str | None:

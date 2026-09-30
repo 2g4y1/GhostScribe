@@ -73,18 +73,13 @@ def max_workers() -> int:
     return max(1, (os.cpu_count() or 2) // 2)
 
 
-def default_workers() -> int:
-    """A quarter of the logical processors: measured on 8 cores / 16 threads, 4 processes were 1.5 times as fast
-    as one, 8 or 14 were not faster."""
-    return max(1, (os.cpu_count() or 1) // 4)
-
-
 def configured_workers() -> int:
-    """VOICE_WORKERS from .env, limited to max_workers(); without a valid value default_workers()."""
+    """VOICE_WORKERS from .env (1 without a valid value), limited to max_workers(). Measured on 8 cores /
+    16 threads: 4 processes were 1.5 times as fast as one, 8 or 14 were not faster."""
     try:
         workers = int(os.getenv("VOICE_WORKERS", ""))
     except ValueError:
-        return default_workers()
+        return 1
     return max(1, min(workers, max_workers()))
 
 

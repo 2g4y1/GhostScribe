@@ -166,6 +166,8 @@ def run() -> int:
     footer = Footer()
     footer.show(footer_lines())
     footer.print(translate("terminal.cli_tip", command="python -m ghostscribe --cli"))
+    if not os.getenv("GEMINI_API_KEY", "").strip():
+        footer.print(translate("terminal.no_api_key"))
     restart = threading.Event()
 
     def request_restart():

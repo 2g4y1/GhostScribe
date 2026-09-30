@@ -70,7 +70,7 @@ Settings are stored in `.env`, which is created from `.env.example` and can be e
 | `AI_ACT_MODE` | `true` | Default mode: `true` is EU AI Act compliant, `false` adds sentiment analysis |
 | `UI_LANGUAGE` | browser language | Interface language, for example `en` or `de` |
 | `VOICE_RECOGNITION` | `false` | Local voice recognition and voice profiles |
-| `VOICE_WORKERS` | a quarter of the logical processors | Parallel processes for the voice recognition of long recordings (at most half of the logical processors) |
+| `VOICE_WORKERS` | `1` | Parallel processes for the voice recognition of long recordings (at most half of the logical processors) |
 
 ## Adding a language
 

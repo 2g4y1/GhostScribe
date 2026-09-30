@@ -101,3 +101,25 @@ def test_settings_are_persisted_and_line_breaks_rejected(client, workdir, monkey
     env = (workdir / ".env").read_text(encoding="utf-8")
     assert "GEMINI_MODEL=m1" in env and "AI_ACT_MODE=false" in env
     assert client.get("/api/status").json()["default_ai_act_mode"] is False
+
+
+@pytest.mark.parametrize(
+    ("google_says", "status", "unchecked"), [(True, 200, False), (None, 200, True), (False, 400, None)]
+)
+def test_a_new_api_key_is_only_saved_when_google_does_not_reject_it(
+    client, workdir, monkeypatch, google_says, status, unchecked
+):
+    from ghostscribe import app
+
+    monkeypatch.setattr(app, "check_api_key", lambda key: google_says)  # True, False or None (Google unreachable)
+    monkeypatch.setenv("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))  # restored after the test
+    before = (workdir / ".env").read_text(encoding="utf-8")
+
+    response = client.post("/api/settings", json={"api_key": "AIzaSy-new-test-key"})
+
+    assert response.status_code == status
+    saved = "GEMINI_API_KEY=AIzaSy-new-test-key" in (workdir / ".env").read_text(encoding="utf-8")
+    assert saved is (google_says is not False)
+    if saved:
+        assert response.json()["key_unchecked"] is unchecked
+    (workdir / ".env").write_text(before, encoding="utf-8")

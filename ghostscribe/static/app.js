@@ -337,10 +337,14 @@
       }
     });
 
-    settingsBtn.addEventListener("click", () => {
+    // Opens the settings with the current values; without a key the cursor waits in the key field
+    function openSettings() {
       updateSettingsModalUI();
       settingsModal.classList.add("active");
-    });
+      if (!hasApiKeyConfigured) apiKeyInput.focus();
+    }
+
+    settingsBtn.addEventListener("click", openSettings);
     const closeModal = () => settingsModal.classList.remove("active");
     closeSettingsBtn.addEventListener("click", closeModal);
     if (closeSettingsX) closeSettingsX.addEventListener("click", closeModal);
@@ -389,6 +393,7 @@
           body: JSON.stringify(payload)
         });
         if (res.ok) {
+          const saved = await res.json();
           if (!isMaskedOrEmpty) {
             hasApiKeyConfigured = true;
           }
@@ -400,11 +405,12 @@
           defaultAiActMode = payload.default_ai_act_mode;
           renderModeWarning();
           settingsModal.classList.remove("active");
-          showToast(t("toast.settings_saved"));
+          showToast(t(saved.key_unchecked ? "toast.api_key_unchecked" : "toast.settings_saved"));
           pollStatus();
         } else {
           const errData = await res.json().catch(() => ({}));
           showToast(t("toast.save_failed", { message: errorText(errData) }));
+          if (payload.api_key) apiKeyInput.focus(); // mostly a key that Google rejected
         }
       } catch (err) {
         showToast(t("toast.save_failed", { message: err }));
@@ -792,9 +798,7 @@
         startAnalysis();
       } else if (!isBusy()) {
         if (!hasApiKeyConfigured) {
-          welcomeBanner.style.display = "block";
-          settingsModal.classList.add("active");
-          apiKeyInput.focus();
+          openSettings();
           return;
         }
         const title = meetingTitleInput.value.trim();
@@ -1273,7 +1277,7 @@
     function applyUrlParams() {
       const params = new URLSearchParams(window.location.search);
       if (params.get("meeting")) loadMeeting(params.get("meeting"));
-      if (params.get("open_settings") === "1") settingsModal.classList.add("active");
+      if (params.get("open_settings") === "1") openSettings();
       if (params.get("scroll") === "protocol") {
         setTimeout(() => markdownBody.scrollIntoView({ behavior: "instant", block: "start" }), 600);
       }
@@ -1355,7 +1359,7 @@
 
     async function startAnalysis() {
       if (!hasApiKeyConfigured) {
-        settingsModal.classList.add("active");
+        openSettings();
         return;
       }
       try {
@@ -1664,14 +1668,9 @@
           teamsVuFill.style.width = Math.min(100, Math.round(data.loopback_level * 100 * 1.5)) + "%";
 
           hasApiKeyConfigured = data.has_api_key;
-          if (!data.has_api_key) {
-            if (!hasSeenWelcomeModal) {
-              hasSeenWelcomeModal = true;
-              welcomeBanner.style.display = "block";
-              settingsModal.classList.add("active");
-            }
-          } else {
-            welcomeBanner.style.display = "none";
+          if (!data.has_api_key && !hasSeenWelcomeModal) {
+            hasSeenWelcomeModal = true;
+            openSettings();
           }
 
           // Status & UI states
