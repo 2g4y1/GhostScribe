@@ -289,12 +289,16 @@
   "viewer.transcript_toggle_title": "Show the transcript in the original language or in the German translation",
   "viewer.voice_confirmed": "✓ saved",
   "viewer.voice_consent": "Person has consented",
+  "viewer.voice_minutes_name": "name from the minutes",
   "viewer.voice_name_placeholder": "Name",
   "viewer.voice_play": "Sample",
+  "viewer.voice_profile_match": "voice profile matches · {percent} %",
   "viewer.voice_recognized": "recognized · {percent}%",
   "viewer.voice_save": "Save voice profile",
   "viewer.voice_speaking_time": "{time} of speech",
   "viewer.voice_unknown": "unknown",
+  "viewer.voices_suggested_one": "{count} suggestion",
+  "viewer.voices_suggested_other": "{count} suggestions",
   "viewer.voices_title": "🗣️ Voices in this recording",
   "viewer.voices_unnamed": "{count} unnamed"
 }

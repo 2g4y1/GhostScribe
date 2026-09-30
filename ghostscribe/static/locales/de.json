@@ -289,12 +289,16 @@
   "viewer.transcript_toggle_title": "Transkript in der Originalsprache oder in deutscher Übersetzung anzeigen",
   "viewer.voice_confirmed": "✓ gespeichert",
   "viewer.voice_consent": "Person hat eingewilligt",
+  "viewer.voice_minutes_name": "Name aus dem Protokoll",
   "viewer.voice_name_placeholder": "Name",
   "viewer.voice_play": "Hörprobe",
+  "viewer.voice_profile_match": "Stimmprofil passt · {percent} %",
   "viewer.voice_recognized": "erkannt · {percent} %",
   "viewer.voice_save": "Stimmprofil speichern",
   "viewer.voice_speaking_time": "{time} Sprechzeit",
   "viewer.voice_unknown": "unbekannt",
+  "viewer.voices_suggested_one": "{count} Vorschlag",
+  "viewer.voices_suggested_other": "{count} Vorschläge",
   "viewer.voices_title": "🗣️ Stimmen in dieser Aufnahme",
   "viewer.voices_unnamed": "{count} ohne Namen"
 }

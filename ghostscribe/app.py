@@ -31,6 +31,7 @@ from ghostscribe.voices import (
     recognition_enabled,
     rename_speaker,
     save_profile,
+    suggest_names,
     valid_name,
 )
 
@@ -622,9 +623,13 @@ def get_meeting(meeting_id: str):
     with open(md_path, encoding="utf-8") as f:
         markdown = f.read()
 
+    metadata = _without_fingerprints(meta)
+    suggestions = suggest_names(meta.get("voices") or [], markdown, load_profiles(), meta.get("user_name") or "")
+    for voice in metadata["voices"]:
+        voice.update(suggestions.get(voice["label"], {}))
     audio_filename = os.path.basename(meta.get("audio_file", ""))
     return {
-        "metadata": _without_fingerprints(meta),
+        "metadata": metadata,
         "markdown": markdown,
         "audio_url": f"/recordings/{audio_filename}" if audio_filename else None,
     }

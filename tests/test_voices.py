@@ -121,6 +121,50 @@ def test_rename_speaker_replaces_generated_labels_everywhere_but_names_only_as_s
     assert "**Anna:** Danke, Sarah." in voices.rename_speaker(renamed, "Sarah", "Anna")
 
 
+def test_unknown_voices_get_names_from_later_profiles_or_from_the_minutes():
+    trump = {"id": "p1", "name": "Donald Trump", "model": voices.EMBEDDING_NAME, "embedding": [1.0, 0.0, 0.0]}
+    meeting = [
+        {"label": "Stimme 1", "seconds": 300, "intervals": [[0, 60]], "embedding": [0.9, 0.1, 0.0]},
+        {"label": "Stimme 2", "seconds": 120, "intervals": [[60, 120]], "embedding": [0.0, 1.0, 0.0]},
+        {"label": "Stimme 3", "seconds": 20, "intervals": [[120, 130]], "embedding": [0.0, 0.0, 1.0]},
+        {"label": "Stimme 4", "seconds": 12, "intervals": [[130, 140]], "embedding": [0.0, 0.6, 0.8]},
+    ]
+    minutes = "\n".join(
+        [
+            "- [00:00:05] **Donald Trump:** a",
+            "- [00:01:05] **Kristen Welker:** b",
+            "- [00:01:30] **Kristen Welker:** c",
+            "- [00:01:50] **Donald Trump:** d",  # an interjection while she speaks
+            "- [00:01:55] **Kristen Welker:** e",
+            "- [00:02:02] **Natalie (Stimme 3):** f",
+            "- [00:02:12] **Sprecher A:** g",
+            "- [00:02:15] **Sprecher A:** h",
+        ]
+    )
+
+    assert voices.suggest_names(meeting, minutes, [trump], user_name="Ich") == {
+        "Stimme 1": {"suggested_name": "Donald Trump", "suggested_similarity": 0.994},  # profile saved later
+        "Stimme 2": {"suggested_name": "Kristen Welker", "suggested_similarity": None},
+        "Stimme 3": {"suggested_name": "Natalie", "suggested_similarity": None},
+    }
+    recognized = {"label": "Donald Trump", "seconds": 50, "intervals": [], "profile_id": "p1"}
+    assert voices.suggest_names([recognized, meeting[0]], "", [trump]) == {}  # each profile once per meeting
+
+
+def test_meeting_view_suggests_names_for_unknown_voices(client, write_file, profiles_file):
+    voice = {"label": "Stimme 1", "seconds": 30.0, "intervals": [[0, 30]], "embedding": [0.0, 1.0], "profile_id": None}
+    write_file("meetings/meeting_s.json", json.dumps({"title": "S", "voices": [voice]}))
+    write_file("meetings/meeting_s.md", "- [00:00:02] **Tom:** Hallo\n- [00:00:10] **Tom:** Tschüss")
+
+    shown = client.get("/api/meetings/meeting_s").json()["metadata"]["voices"][0]
+    assert (shown["suggested_name"], shown["suggested_similarity"]) == ("Tom", None)
+    assert "embedding" not in shown
+
+    voices.save_profile("Anna", [0.0, 1.0], 30.0)  # a voice profile saved after the analysis comes first
+    shown = client.get("/api/meetings/meeting_s").json()["metadata"]["voices"][0]
+    assert (shown["suggested_name"], shown["suggested_similarity"]) == ("Anna", 1.0)
+
+
 @pytest.mark.parametrize(
     ("name", "valid"),
     [

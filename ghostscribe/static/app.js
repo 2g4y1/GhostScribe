@@ -997,12 +997,17 @@
       const modeBadge = el("span", `badge-tag ${isAiAct ? "ai-act" : "sentiment"}`, t(isAiAct ? "viewer.badge_ai_act" : "viewer.badge_sentiment"));
       modeBadge.title = t(isAiAct ? "viewer.badge_ai_act_title" : "viewer.badge_sentiment_title");
       const details = [t("viewer.meeting_on", { date: meetingDate(meta, { dateStyle: "long", timeStyle: "short" }) }), t("viewer.model", { model: meta.model_used })];
-      viewMeta.replaceChildren(details.join(" • "), modeBadge);
+      // Lines break between the details and between the chips, never inside them
+      const detailsLine = el("span");
+      details.forEach((text, index) => detailsLine.append(index ? " • " : "", el("span", "viewer-detail", text)));
+      viewMeta.replaceChildren(detailsLine, modeBadge);
       const names = splitNames(meta.participants);
       if (names.length) {
         const selfKey = speakerKey(meta.user_name || "");
+        const chips = el("span", "viewer-participant-chips");
+        chips.append(...names.map((name, index) => participantChip(name, index, selfKey)));
         const row = el("div", "viewer-participants");
-        row.append(el("span", "", t("viewer.participants")), ...names.map((name, index) => participantChip(name, index, selfKey)));
+        row.append(el("span", "viewer-participants-label", t("viewer.participants")), chips);
         viewMeta.append(row);
       }
     }
@@ -1167,32 +1172,44 @@
     // Voices of the meeting (local voice recognition): recognized profiles and unknown voices to name
     const voicesPanel = document.getElementById("voicesPanel");
 
-    // The voices start collapsed; their heading counts them and says how many still have no name
+    // The voices start collapsed; their heading counts them, the suggested names and the voices without a name
     let voicesOpen = false;
     voicesPanel.addEventListener("toggle", () => (voicesOpen = voicesPanel.open));
 
     function renderVoices(meta) {
       const voices = meta.voices || [];
-      const unnamed = voices.filter(voice => !voice.profile_id).length;
-      const summary = el("summary", "voices-title", t("viewer.voices_title"));
-      summary.append(el("span", "voices-count", String(voices.length)));
-      if (unnamed) summary.append(el("span", "voices-unnamed", t("viewer.voices_unnamed", { count: unnamed })));
+      const suggested = voices.filter(voice => !voice.profile_id && voice.suggested_name).length;
+      const unnamed = voices.filter(voice => !voice.profile_id && !voice.suggested_name).length;
+      const heading = el("span", "voices-heading", t("viewer.voices_title"));
+      heading.append(el("span", "voices-count", String(voices.length)));
+      if (suggested) heading.append(el("span", "voices-suggested", t("viewer.voices_suggested", { count: suggested })));
+      if (unnamed) heading.append(el("span", "voices-unnamed", t("viewer.voices_unnamed", { count: unnamed })));
+      const summary = el("summary", "voices-title");
+      summary.append(heading);
       summary.insertAdjacentHTML("beforeend", CHEVRON_ICON);
       voicesPanel.hidden = voices.length === 0;
       voicesPanel.replaceChildren(summary, ...voices.map(voiceRow));
       voicesPanel.open = voicesOpen;
     }
 
+    // Saved, recognized by its profile, suggested (a profile saved after the analysis or the name from the minutes)
+    // or unknown
+    function voiceStatus(voice) {
+      if (voice.confirmed) return [t("viewer.voice_confirmed"), "known"];
+      if (voice.profile_id) return [t("viewer.voice_recognized", { percent: Math.round(voice.similarity * 100) }), "known"];
+      if (voice.suggested_similarity) {
+        return [t("viewer.voice_profile_match", { percent: Math.round(voice.suggested_similarity * 100) }), "suggested"];
+      }
+      if (voice.suggested_name) return [t("viewer.voice_minutes_name"), "suggested"];
+      return [t("viewer.voice_unknown"), ""];
+    }
+
     function voiceRow(voice) {
-      const status = voice.confirmed
-        ? t("viewer.voice_confirmed")
-        : voice.profile_id
-          ? t("viewer.voice_recognized", { percent: Math.round(voice.similarity * 100) })
-          : t("viewer.voice_unknown");
+      const [status, kind] = voiceStatus(voice);
       const info = el("div", "voice-info");
       info.append(
         el("strong", "voice-label", voice.label),
-        el("span", `voice-status${voice.profile_id ? " known" : ""}`, status),
+        el("span", kind ? `voice-status ${kind}` : "voice-status", status),
         el("span", "voice-time", t("viewer.voice_speaking_time", { time: formatTime(voice.seconds) }))
       );
 
@@ -1209,7 +1226,7 @@
       name.type = "text";
       name.maxLength = 60;
       name.placeholder = t("viewer.voice_name_placeholder");
-      if (voice.profile_id) name.value = voice.label;
+      name.value = voice.profile_id ? voice.label : voice.suggested_name || "";
       const consent = el("input");
       consent.type = "checkbox";
       const consentLabel = el("label", "voice-consent");

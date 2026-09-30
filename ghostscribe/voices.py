@@ -15,6 +15,7 @@ import tarfile
 import urllib.request
 import uuid
 import wave
+from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from itertools import pairwise
@@ -45,6 +46,8 @@ MERGE_GAP = 1.5  # pauses up to this length do not split a speaking turn
 MIN_PART_SECONDS = 300.0  # parts are at least this long: shorter ones separate the voices less reliably
 SPLIT_SEARCH_SECONDS = 15.0  # a part ends at the quietest moment this close to its nominal end
 MIN_PART_VOICE_SECONDS = 2.0  # clusters of a part from this length are merged across the parts first
+MIN_SUGGESTION_LINES = 2  # the minutes name an unknown voice when a name has at least this many transcript lines ...
+MIN_SUGGESTION_SHARE = 0.6  # ... and this share of the lines that start while the voice speaks
 
 _RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 SEGMENTATION_ARCHIVE = (
@@ -60,6 +63,11 @@ EMBEDDING_NAME = EMBEDDING_MODEL[0].rsplit("/", 1)[1]
 
 _NAME = re.compile(r"^[\w .'’()-]{1,60}$")
 _UNKNOWN = re.compile(r"^Stimme \d+$")
+_TRANSCRIPT_SPEAKER = re.compile(r"^\s*- \[(\d{2}):(\d{2}):(\d{2})\] \*\*([^*]+?):?\*\*", re.MULTILINE)
+_NAMED_VOICE = re.compile(r"^(?P<name>.+?)\s*\((?P<voice>Stimme \d+)\)$")  # "Roland (Stimme 1)"
+_PLACEHOLDER = re.compile(
+    r"^(Stimme|Sprecher|Speaker|Kollege|Kollegin|Teilnehmer|Teilnehmerin|Person)\b", re.IGNORECASE
+)
 
 
 def recognition_enabled() -> bool:
@@ -227,11 +235,9 @@ def merge_similar_voices(voices: list[dict], threshold: float = MERGE_THRESHOLD)
     return [voice for voice, keep in zip(voices, alive, strict=True) if keep]
 
 
-def label_voices(voices: list[dict], profiles: list[dict]) -> list[dict]:
-    """Names recognized voices after their profile (each profile once, most similar first); the others become
-    "Stimme 1", "Stimme 2", ... in the order of their speaking time. A voice is only recognized with enough
-    speaking time, a clear similarity and a clear lead over the second-best profile."""
-    voices = sorted(voices, key=lambda v: -v["seconds"])
+def match_profiles(voices: list[dict], profiles: list[dict]) -> dict[int, tuple[dict, float]]:
+    """Recognized voices as {index: (profile, similarity)}: each profile once, the most similar voice first, and only
+    with enough speaking time, a clear similarity and a clear lead over the second-best profile."""
     candidates = [p for p in profiles if p.get("model") == EMBEDDING_NAME]
     pairs = []
     for i, voice in enumerate(voices):
@@ -250,6 +256,14 @@ def label_voices(voices: list[dict], profiles: list[dict]) -> list[dict]:
         if profile["id"] not in used:
             matches[i] = (profile, similarity)
             used.add(profile["id"])
+    return matches
+
+
+def label_voices(voices: list[dict], profiles: list[dict]) -> list[dict]:
+    """Names recognized voices after their profile; the others become "Stimme 1", "Stimme 2", ... in the order of
+    their speaking time."""
+    voices = sorted(voices, key=lambda v: -v["seconds"])
+    matches = match_profiles(voices, profiles)
     unknown = 0
     for i, voice in enumerate(voices):
         if i in matches:
@@ -259,6 +273,59 @@ def label_voices(voices: list[dict], profiles: list[dict]) -> list[dict]:
             unknown += 1
             voice.update(label=UNKNOWN_LABEL.format(number=unknown), profile_id=None, similarity=None)
     return voices
+
+
+def _voice_at(voices: list[dict], start: float, end: float) -> str | None:
+    """The voice that speaks most between start and end."""
+    overlaps = {
+        v["label"]: sum(max(0.0, min(b, end) - max(a, start)) for a, b in v.get("intervals", [])) for v in voices
+    }
+    label, overlap = max(overlaps.items(), key=lambda item: item[1], default=(None, 0.0))
+    return label if overlap > 0 else None
+
+
+def suggest_names(voices: list[dict], markdown: str, profiles: list[dict], user_name: str = "") -> dict[str, dict]:
+    """Names for the unknown voices of a meeting, only as a suggestion (nothing is saved): a voice profile saved after
+    the analysis, otherwise the name the minutes give the voice ("Roland (Stimme 1)", or the speaker of most
+    transcript lines that start while the voice speaks)."""
+    unknown = [voice for voice in voices if not voice.get("profile_id")]
+    taken = {voice["profile_id"] for voice in voices if voice.get("profile_id")}
+    fingerprinted = [voice for voice in unknown if voice.get("embedding") is not None]
+    suggestions = {}
+    for i, (profile, similarity) in match_profiles(
+        fingerprinted, [p for p in profiles if p["id"] not in taken]
+    ).items():
+        suggestions[fingerprinted[i]["label"]] = {
+            "suggested_name": profile["name"],
+            "suggested_similarity": round(similarity, 3),
+        }
+
+    named, timed = defaultdict(Counter), defaultdict(Counter)
+    for hours, minutes, seconds, speaker in _TRANSCRIPT_SPEAKER.findall(markdown):
+        speaker = speaker.strip()
+        direct = _NAMED_VOICE.match(speaker)
+        if direct:
+            named[direct["voice"]][direct["name"]] += 1
+            continue
+        start = int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+        voice = _voice_at(unknown, start, start + 4)
+        if voice:
+            timed[voice][speaker] += 1
+    for voice in unknown:
+        label = voice["label"]
+        if label in suggestions:
+            continue
+        if named[label]:
+            name = named[label].most_common(1)[0][0]
+        elif timed[label]:
+            name, lines = timed[label].most_common(1)[0]
+            if lines < MIN_SUGGESTION_LINES or lines < MIN_SUGGESTION_SHARE * sum(timed[label].values()):
+                continue
+        else:
+            continue
+        if valid_name(name) and name != user_name and not _PLACEHOLDER.match(name):
+            suggestions[label] = {"suggested_name": name, "suggested_similarity": None}
+    return suggestions
 
 
 def part_bounds(samples: np.ndarray, parts: int) -> list[int]:
