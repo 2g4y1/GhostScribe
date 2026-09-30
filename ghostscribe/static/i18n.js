@@ -1,6 +1,6 @@
 // Translations for the web interface: one file per language in /static/locales/ with flat keys,
 // {placeholder} parameters and _one/_other plural variants. Missing texts fall back to English.
-const i18n = {
+export const i18n = {
   language: "en",
   messages: {},
   fallback: {},
@@ -56,4 +56,4 @@ const i18n = {
   },
 };
 
-const t = (key, params) => i18n.t(key, params);
+export const t = (key, params) => i18n.t(key, params);

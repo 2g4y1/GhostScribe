@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 
@@ -139,3 +140,65 @@ def test_a_new_api_key_is_only_saved_when_google_does_not_reject_it(
     if saved:
         assert response.json()["key_unchecked"] is unchecked
     (workdir / ".env").write_text(before, encoding="utf-8")
+
+
+def test_responses_carry_security_headers(client):
+    headers = client.get("/").headers
+
+    assert "frame-ancestors 'none'" in headers["content-security-policy"]
+    assert "script-src 'self'" in headers["content-security-policy"]
+    assert headers["x-frame-options"] == "DENY" and headers["x-content-type-options"] == "nosniff"
+    assert client.get("/api/status").headers["cache-control"] == "no-store"  # personal data stays out of the cache
+
+
+@pytest.mark.parametrize(
+    ("fetch_metadata", "status"),
+    [
+        ({"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "audio"}, 403),
+        ({"Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}, 403),
+        ({"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe"}, 403),
+        ({"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, 200),
+        ({"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}, 200),
+        ({"Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}, 200),
+    ],
+)
+def test_other_websites_can_only_link_to_the_web_interface(client, fetch_metadata, status):
+    assert client.get("/", headers=fetch_metadata).status_code == status
+
+
+def test_only_audio_files_are_served_from_the_recordings(client, write_file):
+    write_file("recordings/meeting_ctx.context.json", '{"chat_text": "private"}')
+    write_file("recordings/meeting_ctx.mp3")
+
+    assert client.get("/recordings/meeting_ctx.context.json").status_code == 404
+    response = client.get("/recordings/meeting_ctx.mp3")
+    assert response.status_code == 200 and response.headers["content-type"] == "audio/mpeg"
+    for name in ("meeting_ctx.context.json", "meeting_ctx.mp3"):
+        os.remove(f"recordings/{name}")
+
+
+def test_attachments_must_be_png_jpeg_or_webp(workdir):
+    from ghostscribe.app import AttachmentItem, save_attachments
+
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n...").decode()
+    fake = base64.b64encode(b"<svg onload=alert(1)>").decode()
+
+    saved = save_attachments(
+        [
+            AttachmentItem(data=f"data:image/jpeg;base64,{png}"),  # the content decides, not the header
+            AttachmentItem(data=f"data:image/png;base64,{fake}"),
+            AttachmentItem(data="data:image/png;base64,not base64!"),
+        ]
+    )
+
+    assert [os.path.splitext(path)[1] for path in saved] == [".png"]
+    os.remove(saved[0])
+
+
+@pytest.mark.parametrize(
+    ("path", "media_type"),
+    [("/static/app.js", "text/javascript"), ("/static/style.css", "text/css"), ("/static/icon-512.webp", "image/webp")],
+)
+def test_static_files_have_the_media_types_browsers_require(client, path, media_type):
+    # Module scripts and nosniff need exact types, whatever the Windows registry says
+    assert client.get(path).headers["content-type"].split(";")[0] == media_type

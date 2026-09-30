@@ -9,9 +9,11 @@ confirms the consent of the person: voice fingerprints are biometric data.
 import hashlib
 import json
 import logging
+import multiprocessing
 import os
 import re
 import tarfile
+import threading
 import urllib.request
 import uuid
 import wave
@@ -24,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from ghostscribe.i18n import LocalizedError
-from ghostscribe.utils import format_duration
+from ghostscribe.utils import format_duration, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,8 @@ SPLIT_SEARCH_SECONDS = 15.0  # a part ends at the quietest moment this close to 
 MIN_PART_VOICE_SECONDS = 2.0  # clusters of a part from this length are merged across the parts first
 MIN_SUGGESTION_LINES = 2  # the minutes name an unknown voice when a name has at least this many transcript lines ...
 MIN_SUGGESTION_SHARE = 0.6  # ... and this share of the lines that start while the voice speaks
+DOWNLOAD_TIMEOUT = 60  # seconds without data after which a model download is abandoned
+_PROFILES_LOCK = threading.Lock()  # one change of the voice profiles at a time
 
 _RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 SEGMENTATION_ARCHIVE = (
@@ -93,10 +97,19 @@ def configured_workers() -> int:
 
 # ---------- models ----------
 def _download(url: str, sha256: str, target: Path) -> Path:
+    """Downloads a model and checks its checksum before it is used."""
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".part")
-    urllib.request.urlretrieve(url, partial)
-    if hashlib.sha256(partial.read_bytes()).hexdigest() != sha256:
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as response, open(partial, "wb") as f:  # noqa: S310 (fixed https URL)
+            while chunk := response.read(1 << 16):
+                digest.update(chunk)
+                f.write(chunk)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    if digest.hexdigest() != sha256:
         partial.unlink()
         raise LocalizedError("error.voice_model_checksum", name=target.name)
     return partial.replace(target)
@@ -144,7 +157,7 @@ class VoiceEngine:
 
     def diarize(self, samples: np.ndarray) -> list[list[tuple[float, float]]]:
         """Segments per voice: [[(start, end), ...], ...] in seconds."""
-        voices = {}
+        voices: dict[int, list[tuple[float, float]]] = {}
         for segment in self._diarizer.process(samples).sort_by_start_time():
             voices.setdefault(segment.speaker, []).append((segment.start, segment.end))
         return list(voices.values())
@@ -176,7 +189,7 @@ def _normalize(vector) -> np.ndarray:
 def fingerprint(voice_engine, samples: np.ndarray, segments) -> np.ndarray:
     """Mean of the normalized fingerprints of the longest segments of one voice."""
     vectors, total = [], 0.0
-    for start, end in sorted(segments, key=lambda s: s[0] - s[1]):
+    for start, end in sorted(segments, key=lambda s: s[1] - s[0], reverse=True):
         if end - start < 1.5 or total >= FINGERPRINT_SECONDS:
             continue
         vectors.append(_normalize(voice_engine.embed(samples[int(start * SAMPLE_RATE) : int(end * SAMPLE_RATE)])))
@@ -188,7 +201,7 @@ def fingerprint(voice_engine, samples: np.ndarray, segments) -> np.ndarray:
 
 
 def merge_intervals(segments, gap: float = MERGE_GAP) -> list[list[float]]:
-    merged = []
+    merged: list[list[float]] = []
     for start, end in sorted(segments):
         if merged and start - merged[-1][1] <= gap:
             merged[-1][1] = max(merged[-1][1], end)
@@ -241,16 +254,15 @@ def match_profiles(voices: list[dict], profiles: list[dict]) -> dict[int, tuple[
     candidates = [p for p in profiles if p.get("model") == EMBEDDING_NAME]
     pairs = []
     for i, voice in enumerate(voices):
-        scores = sorted((_similarity(voice["embedding"], p["embedding"]) for p in candidates), reverse=True)
-        best = max(candidates, key=lambda p: _similarity(voice["embedding"], p["embedding"]), default=None)
-        runner_up = scores[1] if len(scores) > 1 else -1.0
-        if (
-            best
-            and voice["seconds"] >= MIN_MATCH_SECONDS
-            and scores[0] >= MATCH_THRESHOLD
-            and scores[0] - runner_up >= MATCH_MARGIN
-        ):
-            pairs.append((scores[0], i, best))
+        if not candidates or voice["seconds"] < MIN_MATCH_SECONDS:
+            continue
+        scores = sorted(
+            ((_similarity(voice["embedding"], p["embedding"]), p) for p in candidates), key=lambda sp: -sp[0]
+        )
+        best_score, best = scores[0]
+        runner_up = scores[1][0] if len(scores) > 1 else -1.0
+        if best_score >= MATCH_THRESHOLD and best_score - runner_up >= MATCH_MARGIN:
+            pairs.append((best_score, i, best))
     matches, used = {}, set()
     for similarity, i, profile in sorted(pairs, key=lambda pair: -pair[0]):
         if profile["id"] not in used:
@@ -300,17 +312,18 @@ def suggest_names(voices: list[dict], markdown: str, profiles: list[dict], user_
             "suggested_similarity": round(similarity, 3),
         }
 
-    named, timed = defaultdict(Counter), defaultdict(Counter)
-    for hours, minutes, seconds, speaker in _TRANSCRIPT_SPEAKER.findall(markdown):
-        speaker = speaker.strip()
+    named: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    timed: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    for hours, minutes, seconds, raw_speaker in _TRANSCRIPT_SPEAKER.findall(markdown):
+        speaker = raw_speaker.strip()
         direct = _NAMED_VOICE.match(speaker)
         if direct:
             named[direct["voice"]][direct["name"]] += 1
             continue
         start = int(hours) * 3600 + int(minutes) * 60 + int(seconds)
-        voice = _voice_at(unknown, start, start + 4)
-        if voice:
-            timed[voice][speaker] += 1
+        speaking = _voice_at(unknown, start, start + 4)
+        if speaking:
+            timed[speaking][speaker] += 1
     for voice in unknown:
         label = voice["label"]
         if label in suggestions:
@@ -340,7 +353,7 @@ def part_bounds(samples: np.ndarray, parts: int) -> list[int]:
         frames = len(region) // window
         energy = np.square(region[: frames * window]).reshape(frames, window).mean(axis=1)
         bounds.append(start + int(np.argmin(energy)) * window + window // 2)
-    return bounds + [len(samples)]
+    return [*bounds, len(samples)]
 
 
 def _voices_in(voice_engine, samples: np.ndarray, offset: float = 0.0) -> list[dict]:
@@ -392,7 +405,9 @@ def recognize_voices(
         bounds = part_bounds(read_system_channel(wav_path), parts) if parts > 1 else [0, frames]
         threads = max(1, min(4, (os.cpu_count() or 2) // 2 // parts))  # together not more than the physical cores
         found = []
-        with ProcessPoolExecutor(parts) as pool:
+        # Always fresh processes ("spawn", the default on Windows and macOS): forking the multi-threaded server
+        # could copy a lock that another thread holds
+        with ProcessPoolExecutor(parts, mp_context=multiprocessing.get_context("spawn")) as pool:
             jobs = [pool.submit(_part_voices, wav_path, start, end, threads) for start, end in pairwise(bounds)]
             for done, job in enumerate(as_completed(jobs), 1):
                 found += job.result()
@@ -433,8 +448,9 @@ def load_profiles() -> list[dict]:
 
 
 def _save_profiles(profiles: list[dict]) -> None:
+    """Written in one step: the profiles are never lost halfway through a write."""
     PROFILES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROFILES_FILE.write_text(json.dumps(profiles, ensure_ascii=False, indent=1), encoding="utf-8")
+    write_json_atomic(PROFILES_FILE, profiles, indent=1)
 
 
 def valid_name(name: str) -> bool:
@@ -443,6 +459,11 @@ def valid_name(name: str) -> bool:
 
 def save_profile(name: str, embedding, seconds: float) -> dict:
     """Adds a voice to the profile of this name (weighted by speaking time) or creates the profile."""
+    with _PROFILES_LOCK:
+        return _save_profile(name, embedding, seconds)
+
+
+def _save_profile(name: str, embedding, seconds: float) -> dict:
     profiles = load_profiles()
     now = datetime.now().isoformat(timespec="seconds")
     profile = next(
@@ -474,11 +495,12 @@ def save_profile(name: str, embedding, seconds: float) -> dict:
 
 
 def delete_profile(profile_id: str) -> bool:
-    profiles = load_profiles()
-    remaining = [p for p in profiles if p["id"] != profile_id]
-    if len(remaining) == len(profiles):
-        return False
-    _save_profiles(remaining)
+    with _PROFILES_LOCK:
+        profiles = load_profiles()
+        remaining = [p for p in profiles if p["id"] != profile_id]
+        if len(remaining) == len(profiles):
+            return False
+        _save_profiles(remaining)
     return True
 
 

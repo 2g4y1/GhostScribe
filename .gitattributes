@@ -1,5 +1,17 @@
 # Store text files with LF line endings in the repository
 * text=auto
 
-# cmd.exe needs CRLF line endings in batch files
+# cmd.exe needs CRLF line endings in batch files, sh LF in shell scripts (also when checked out on Windows)
 *.bat text eol=crlf
+*.sh text eol=lf
+*.command text eol=lf
+
+# Binary assets
+*.png binary
+*.webp binary
+*.woff2 binary
+
+# Third-party code and generated files: not counted in the language statistics
+ghostscribe/static/vendor/** linguist-vendored
+package-lock.json linguist-generated
+requirements*.txt linguist-generated

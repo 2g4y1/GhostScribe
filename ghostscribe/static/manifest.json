@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "GhostScribe",
   "short_name": "GhostScribe",
   "description": "Bot-free meeting recorder with AI minutes",

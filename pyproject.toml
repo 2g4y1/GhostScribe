@@ -1,16 +1,80 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ghostscribe"
-version = "1.0.0"
-description = "Bot-free meeting recorder for Windows that turns Teams/Zoom calls into structured minutes with Google Gemini"
+dynamic = ["version"]
+description = "Bot-free meeting recorder for Windows, macOS and Linux that turns Teams/Zoom calls into structured minutes with Google Gemini"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+keywords = ["meeting", "minutes", "recorder", "transcription", "gemini", "teams", "zoom"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: English",
+    "Natural Language :: German",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
+    "Topic :: Office/Business",
+]
+# Lowest supported versions. requirements.txt pins the tested versions of all packages with hashes
+# (generated from this list, see CONTRIBUTING.md); the start scripts install from it.
+dependencies = [
+    "fastapi>=0.141.1",
+    "google-genai>=2.25.0",
+    "numpy>=2.4.6",
+    "PyAudioWPatch>=0.2.12.8; sys_platform == 'win32'",  # WASAPI with loopback of the playback device
+    "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
+    "sherpa-onnx>=1.13.8",
+    # Listed explicitly: the source package of sherpa-onnx does not declare it, so lock files for all platforms would miss it
+    "sherpa-onnx-core>=1.13.8",
+    "soundcard>=0.4.6; sys_platform != 'win32'",  # PulseAudio/PipeWire and Core Audio
+    "uvicorn>=0.54.0",
+    # Needed by google-genai (through google-auth). From version 49 on there are no wheels for Intel Macs: they keep
+    # the last version with one, all other systems get the current versions
+    "cryptography<49; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "cryptography>=50.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+]
+
+[project.scripts]
+ghostscribe = "ghostscribe.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/2g4y1/GhostScribe"
 Issues = "https://github.com/2g4y1/GhostScribe/issues"
-# Runtime dependencies are pinned in requirements.txt (installed by install_requirements.bat),
-# development tools in requirements-dev.txt.
+Changelog = "https://github.com/2g4y1/GhostScribe/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# Development tools (requirements-dev.txt pins them together with the dependencies above)
+dev = [
+    "httpx2>=2.13.1",  # the HTTP client of FastAPI's TestClient
+    "mypy>=1.18",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.0",
+    "ruff>=0.16.9",
+]
+
+[tool.setuptools]
+packages = ["ghostscribe"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ghostscribe.__version__" }
+
+[tool.setuptools.package-data]
+ghostscribe = ["static/**/*"]
 
 [tool.ruff]
 line-length = 120
@@ -26,15 +90,62 @@ select = [
     "B",      # flake8-bugbear
     "C4",     # flake8-comprehensions
     "PIE",    # flake8-pie
+    "SIM",    # flake8-simplify
+    "RUF",    # Ruff-specific rules
+    "PT",     # flake8-pytest-style
+    "S",      # flake8-bandit (security)
+    "PERF",   # Perflint
+    "LOG",    # flake8-logging
+    "G",      # flake8-logging-format
+    "PGH",    # pygrep-hooks
+    "PLE",    # Pylint errors
+    "PLW",    # Pylint warnings
+    "FURB",   # refurb
+    "RET",    # flake8-return
+    "ISC",    # flake8-implicit-str-concat
+    "A",      # flake8-builtins
+    "N",      # pep8-naming
 ]
 ignore = [
-    "E501",   # line-too-long (handled by formatter / long prompt strings)
-    "B008",   # do not perform function calls in argument defaults (FastAPI Depends/BackgroundTasks)
+    "E501",     # line-too-long (handled by formatter / long prompt strings)
+    "RUF001",   # German quotation marks and dashes in prompts and texts are intended ...
+    "RUF002",   # ... also in docstrings ...
+    "RUF003",   # ... and comments
+    "PT018",    # composite assertions keep the tests short
+    "S603",     # subprocess calls use fixed argument lists without a shell
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # assert is how pytest checks
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
+known-first-party = ["ghostscribe"]
+known-local-folder = ["fakes"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["ghostscribe", "scripts"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["pyaudiowpatch", "soundcard", "sherpa_onnx"]  # no type information
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
+
+[tool.coverage.run]
+source = ["ghostscribe"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ['if __name__ == "__main__":']

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on the first day of the month"],
+  "constraints": {
+    "python": "3.11",
+    "uv": "0.8.17"
+  },
+  "pip-compile": {
+    "managerFilePatterns": ["/(^|/)requirements(-dev)?\\.txt$/"]
+  },
+  "pip_requirements": {
+    "enabled": false
+  },
+  "lockFileMaintenance": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "groupName": "Python dependencies",
+      "matchManagers": ["pep621", "pip-compile"]
+    },
+    {
+      "groupName": "GitHub Actions",
+      "matchManagers": ["github-actions"]
+    },
+    {
+      "groupName": "ESLint",
+      "matchManagers": ["npm"]
+    }
+  ]
+}

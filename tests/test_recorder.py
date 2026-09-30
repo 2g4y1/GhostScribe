@@ -1,10 +1,15 @@
+import json
 import shutil
 import wave
 
 import numpy as np
 import pytest
 
+from ghostscribe import recorder as recorder_module
+from ghostscribe.i18n import LocalizedError
 from ghostscribe.recorder import MeetingRecorder, resample_to_mono
+
+from fakes import Clock, FakeBackend
 
 SR_IN, SR_OUT = 48000, 16000
 AMPLITUDE = 10000
@@ -18,6 +23,27 @@ def tone(freq, seconds=1.0, channels=1):
 
 def rms(samples):
     return float(np.sqrt(np.mean(samples[500:-500].astype(np.float64) ** 2)))
+
+
+@pytest.fixture
+def clock():
+    return Clock()
+
+
+@pytest.fixture
+def backend():
+    return FakeBackend()
+
+
+@pytest.fixture
+def rec(tmp_path, backend, clock):
+    return MeetingRecorder(output_dir=str(tmp_path), backend=backend, clock=clock)
+
+
+def channels_of(path):
+    with wave.open(str(path), "rb") as wf:
+        assert (wf.getnchannels(), wf.getframerate()) == (2, SR_OUT)
+        return np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16).reshape(-1, 2)
 
 
 def test_resample_keeps_speech_frequencies():
@@ -43,18 +69,166 @@ def test_resample_mixes_the_first_two_channels():
     assert abs(int(out[SR_IN // 2]) - 500) <= 1
 
 
-def test_save_pads_both_channels_to_the_recording_duration(tmp_path):
-    recorder = MeetingRecorder(output_dir=str(tmp_path))
-    recorder.start_time, recorder.end_time = 1_700_000_000.0, 1_700_000_002.0
-    recorder.mic_channels, recorder.mic_rate = 1, SR_IN
-    recorder.loopback_channels, recorder.loopback_rate = 2, SR_IN
-    recorder.mic_frames = [tone(1000, seconds=1.0).tobytes()]  # microphone delivered only 1 of 2 seconds
-    recorder.loopback_frames = [tone(500, seconds=2.0, channels=2).tobytes()]
+def test_resample_works_in_blocks(monkeypatch):
+    monkeypatch.setattr(recorder_module, "RESAMPLE_BLOCK", 1000)
+    whole = resample_to_mono(tone(440), SR_IN, SR_OUT, mix_channels=False)
+    monkeypatch.setattr(recorder_module, "RESAMPLE_BLOCK", 1 << 20)
 
-    path = recorder.save(compress=False)
+    assert np.array_equal(whole, resample_to_mono(tone(440), SR_IN, SR_OUT, mix_channels=False))
 
-    with wave.open(path, "rb") as wf:
-        assert (wf.getnchannels(), wf.getframerate(), wf.getnframes()) == (2, SR_OUT, 2 * SR_OUT)
+
+def test_recording_is_saved_as_synchronized_stereo_of_the_full_duration(rec, backend, clock, tmp_path):
+    base = rec.start()
+    clock.now += 1.0
+    backend.on_mic(tone(1000, seconds=1.0).tobytes())  # the microphone delivers only 1 of 2 seconds
+    backend.on_system(tone(500, seconds=1.0, channels=2).tobytes())
+    clock.now += 1.0
+    backend.on_system(tone(500, seconds=1.0, channels=2).tobytes())
+
+    assert rec.stop_capture() and not rec.stop_capture()  # stopping twice does nothing the second time
+    path = rec.save(compress=False)
+
+    audio = channels_of(path)
+    assert path == str(tmp_path / f"{base}.wav")
+    assert len(audio) == 2 * SR_OUT
+    assert rms(audio[:SR_OUT, 0]) > 5000 and rms(audio[SR_OUT:, 0]) == 0  # left: microphone, then silence
+    assert rms(audio[:, 1]) > 5000  # right: system audio for the whole recording
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{base}.wav"]  # the raw inputs are removed
+
+
+def test_an_input_that_delivered_nothing_for_a_while_stays_in_time(rec, backend, clock):
+    rec.start()
+    clock.now += 1.0
+    backend.on_system(tone(500, seconds=1.0, channels=2).tobytes())
+    clock.now += 3.0  # the playback device played nothing for two seconds: no data from its loopback
+    backend.on_system(tone(500, seconds=1.0, channels=2).tobytes())
+    rec.stop_capture()
+
+    system = channels_of(rec.save(compress=False))[:, 1]
+    assert len(system) == 4 * SR_OUT
+    assert rms(system[:SR_OUT]) > 5000 and rms(system[3 * SR_OUT :]) > 5000
+    assert rms(system[SR_OUT : 3 * SR_OUT]) == 0  # the pause is where it happened, not at the end
+
+
+def test_the_usual_delay_of_an_input_is_not_mistaken_for_a_gap(rec, backend, clock):
+    rec.start()
+    clock.now += 1.5  # the sound server delivers its first half second one second late (latency)
+    backend.on_mic(tone(1000, seconds=0.5).tobytes())
+    clock.now += 0.5
+    backend.on_mic(tone(1000, seconds=0.5).tobytes())
+    rec.stop_capture()
+
+    mic = channels_of(rec.save(compress=False))[:, 0]
+    assert len(mic) == 2 * SR_OUT
+    assert rms(mic[:SR_OUT]) > 5000 and rms(mic[SR_OUT:]) == 0  # in place; the last second was still under way
+
+
+def test_a_loopback_that_starts_late_is_placed_at_its_time(rec, backend, clock):
+    rec.start()
+    for _ in range(5):
+        clock.now += 1.0
+        backend.on_mic(tone(1000, seconds=1.0).tobytes())
+    backend.on_system(tone(500, seconds=1.0, channels=2).tobytes())  # nothing was played in the first four seconds
+    rec.stop_capture()
+
+    audio = channels_of(rec.save(compress=False))
+    assert len(audio) == 5 * SR_OUT and rms(audio[:, 0]) > 5000
+    assert rms(audio[: 4 * SR_OUT, 1]) == 0 and rms(audio[4 * SR_OUT :, 1]) > 5000
+
+
+@pytest.mark.parametrize(
+    ("first_delays", "offsets"),
+    [
+        ({"mic": 0.02, "system": 30.02}, {"mic": 0.0, "system": 30.0}),  # a loopback that had nothing to play
+        ({"mic": 1.0, "system": 1.0}, {"mic": 0.0, "system": 0.0}),  # the same latency on both inputs
+        ({"mic": 0.509, "system": 0.488}, {"mic": 0.0, "system": 0.0}),  # one audio block apart: no shift
+        ({"mic": 0.5, "system": None}, {"mic": 0.0}),  # the system audio delivered nothing at all
+    ],
+)
+def test_the_later_input_starts_later_in_the_recording(first_delays, offsets):
+    assert recorder_module.start_offsets(first_delays) == offsets
+
+
+def test_level_meters_follow_the_inputs_without_overflow(rec, backend):
+    rec.start()
+    backend.on_mic(np.array([-32768, 0], dtype=np.int16).tobytes())
+
+    assert rec.mic_level == 1.0 and rec.loopback_level == 0.0
+    rec.stop_capture()
+    assert rec.mic_level == 0.0
+
+
+def test_an_interrupted_recording_is_recovered_at_the_next_start(tmp_path, backend, clock):
+    crashed = MeetingRecorder(output_dir=str(tmp_path), backend=backend, clock=clock)
+    base = crashed.start()
+    clock.now += 1.0
+    backend.on_mic(tone(1000).tobytes())
+    backend.on_system(tone(500, channels=2).tobytes())
+    crashed._release()  # the process ended: its files are closed, nothing was converted
+
+    restarted = MeetingRecorder(output_dir=str(tmp_path), backend=FakeBackend())
+    assert restarted.interrupted_recordings() == [base]
+    path = restarted.recover(base)
+
+    audio = channels_of(path if path.endswith(".wav") else path[:-4] + ".wav")
+    assert len(audio) == SR_OUT and rms(audio[:, 0]) > 5000 and rms(audio[:, 1]) > 5000
+    assert restarted.interrupted_recordings() == []
+
+
+def test_recovery_without_audio_only_cleans_up(tmp_path, backend):
+    crashed = MeetingRecorder(output_dir=str(tmp_path), backend=backend)
+    base = crashed.start()
+    crashed._release()
+
+    assert crashed.recover(base) is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cancel_deletes_the_recorded_audio(rec, backend, tmp_path):
+    rec.start()
+    backend.on_mic(tone(1000).tobytes())
+
+    rec.cancel()
+
+    assert not rec.is_recording and backend.stopped
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_failed_start_releases_everything(tmp_path):
+    rec = MeetingRecorder(output_dir=str(tmp_path), backend=FakeBackend(fail=True))
+
+    with pytest.raises(LocalizedError):
+        rec.start()
+
+    assert not rec.is_recording
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_sidecar_describes_both_inputs(rec, tmp_path):
+    base = rec.start()
+
+    sidecar = json.loads((tmp_path / f"{base}.recording.json").read_text(encoding="utf-8"))
+    assert sidecar["inputs"]["mic"] == {"device": "Headset", "channels": 1, "rate": SR_IN}
+    assert sidecar["inputs"]["system"]["channels"] == 2
+    rec.cancel()
+
+
+def test_devices_are_listed_with_their_ids(rec):
+    assert rec.list_devices()["loopbacks"] == [{"id": "2", "name": "Speakers [Loopback]", "default": True}]
+    assert [d.name for d in rec.default_devices()] == ["Headset", "Speakers [Loopback]"]
+
+
+def test_without_ffmpeg_the_wav_file_is_used(tmp_path, monkeypatch):
+    wav = tmp_path / "meeting.wav"
+    wav.write_bytes(b"RIFF")
+
+    def missing_ffmpeg(*args, **kwargs):
+        raise FileNotFoundError("ffmpeg")
+
+    monkeypatch.setattr(recorder_module.subprocess, "run", missing_ffmpeg)
+
+    assert MeetingRecorder.compress_to_mp3(str(wav)) == str(wav)
+    assert [p.name for p in tmp_path.iterdir()] == ["meeting.wav"]  # no half-written MP3 remains
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is optional")

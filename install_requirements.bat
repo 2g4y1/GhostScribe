@@ -25,7 +25,8 @@ echo [2/3] Creating the virtual environment .venv ...
 :install
 echo [3/3] Installing the libraries, the first time takes 1-2 minutes ...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip --quiet --disable-pip-version-check || goto :failed
-".venv\Scripts\python.exe" -m pip install -r requirements.txt --disable-pip-version-check || goto :failed
+rem Every package is pinned with its checksum: a changed or tampered download is rejected
+".venv\Scripts\python.exe" -m pip install --require-hashes -r requirements.txt --disable-pip-version-check || goto :failed
 copy /y requirements.txt ".venv\installed-requirements.txt" >nul
 if not exist ".env" copy ".env.example" ".env" >nul
 

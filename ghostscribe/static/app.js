@@ -1,4 +1,7 @@
-// State
+// The web interface of GhostScribe (an ES module: strict mode, nothing leaks into the global scope)
+    import { i18n, t } from "./i18n.js";
+
+    // State
     let currentStatus = "idle";
     let activeMeetingId = null;
     let activeMeetingMeta = null;
@@ -82,6 +85,33 @@
     for (const type of ["pointerdown", "focusout", "keydown"]) document.addEventListener(type, hideTooltip);
     document.addEventListener("scroll", hideTooltip, true);
 
+    // Dialogs: the page behind the topmost one is inert (no clicks, no keyboard focus), and closing a dialog
+    // returns the focus to where it was
+    const openOverlays = [];
+
+    function applyInert() {
+      const top = openOverlays.at(-1)?.overlay;
+      for (const child of document.body.children) {
+        if (child === tooltip || child.id === "toastNotification" || child.tagName === "SCRIPT") continue;
+        child.inert = Boolean(top) && child !== top;
+      }
+    }
+
+    function overlayOpened(overlay, focusTarget) {
+      if (openOverlays.some(entry => entry.overlay === overlay)) return;
+      openOverlays.push({ overlay, returnFocus: document.activeElement });
+      applyInert();
+      (focusTarget || overlay.querySelector("[tabindex='-1']") || overlay).focus();
+    }
+
+    function overlayClosed(overlay) {
+      const index = openOverlays.findIndex(entry => entry.overlay === overlay);
+      if (index < 0) return;
+      const [{ returnFocus }] = openOverlays.splice(index, 1);
+      applyInert();
+      if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+    }
+
     // Messages and confirmations in the design of the page instead of the browser's alert() and confirm()
     const dialogModal = document.getElementById("dialogModal");
     const dialogMessage = document.getElementById("dialogMessage");
@@ -99,10 +129,11 @@
         closeDialog = (result) => {
           closeDialog = null;
           dialogModal.classList.remove("active");
+          overlayClosed(dialogModal);
           resolve(result);
         };
         dialogModal.classList.add("active");
-        dialogConfirm.focus();
+        overlayOpened(dialogModal, dialogConfirm);
       });
     }
 
@@ -123,8 +154,12 @@
       return i18n.date(meta.meeting_start || meta.created_at, options);
     }
 
-    // Error message returned by the server (already translated), or a generic fallback
-    const errorText = (data) => (typeof data?.detail === "string" ? data.detail : t("common.unknown"));
+    // Error message returned by the server (already translated; validation errors come as a list), or a fallback
+    function errorText(data) {
+      if (typeof data?.detail === "string") return data.detail;
+      if (Array.isArray(data?.detail)) return data.detail.map(error => error.msg).join("; ");
+      return t("common.unknown");
+    }
 
     function syncModelSelect(modelName) {
       if (!modelSelect || !modelName) return;
@@ -316,6 +351,7 @@
     const apiKeyInput = document.getElementById("apiKeyInput");
     const modelSelect = document.getElementById("modelSelect");
     const welcomeBanner = document.getElementById("welcomeBanner");
+    const appVersion = document.getElementById("appVersion");
 
     // Button Flash Helper (Prevents any layout shift / width changes)
     function flashButton(btn) {
@@ -343,10 +379,12 @@
     // Choosing the sentiment mode in the settings needs a confirmation of the legal notice
     function openSentimentWarning() {
       sentimentConfirmModal.classList.add("active");
+      overlayOpened(sentimentConfirmModal, cancelSentimentBtn); // the safe choice has the focus
     }
 
     function closeSentimentWarning(confirmed = false) {
       sentimentConfirmModal.classList.remove("active");
+      overlayClosed(sentimentConfirmModal);
       if (!confirmed) defaultAiActSelect.value = "true";
       renderModeHint();
     }
@@ -390,9 +428,9 @@
 
     // Settings Modal handlers
     function renderApiKeyStatus() {
-      welcomeBanner.style.display = hasApiKeyConfigured ? "none" : "block";
+      welcomeBanner.hidden = hasApiKeyConfigured;
       apiKeyHint.innerHTML = DOMPurify.sanitize(t(hasApiKeyConfigured ? "settings.api_key_hint_saved" : "settings.api_key_hint_new"));
-      apiKeyHint.style.color = hasApiKeyConfigured ? "var(--emerald)" : "var(--text-sub)";
+      apiKeyHint.classList.toggle("success", hasApiKeyConfigured);
     }
 
     function updateSettingsModalUI() {
@@ -430,28 +468,26 @@
     function openSettings() {
       updateSettingsModalUI();
       settingsModal.classList.add("active");
-      if (!hasApiKeyConfigured) apiKeyInput.focus();
+      overlayOpened(settingsModal, hasApiKeyConfigured ? null : apiKeyInput);
+    }
+
+    function closeModal() {
+      settingsModal.classList.remove("active");
+      overlayClosed(settingsModal);
     }
 
     settingsBtn.addEventListener("click", openSettings);
-    const closeModal = () => settingsModal.classList.remove("active");
     closeSettingsBtn.addEventListener("click", closeModal);
     if (closeSettingsX) closeSettingsX.addEventListener("click", closeModal);
 
+    // Escape closes the topmost dialog only (a confirmation over the settings leaves the settings open)
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      if (closeDialog) {
-        closeDialog(false); // a message or confirmation closes first, the settings behind it stay open
-        return;
-      }
-      if (imageLightboxModal && imageLightboxModal.style.display === "flex") {
-        closeLightbox();
-      }
-      if (sentimentConfirmModal && sentimentConfirmModal.classList.contains("active")) {
-        closeSentimentWarning(false);
-      } else if (settingsModal && settingsModal.classList.contains("active")) {
-        closeModal();
-      }
+      const top = openOverlays.at(-1)?.overlay;
+      if (top === dialogModal) closeDialog?.(false);
+      else if (top === imageLightboxModal) closeLightbox();
+      else if (top === sentimentConfirmModal) closeSentimentWarning(false);
+      else if (top === settingsModal) closeModal();
     });
 
     saveSettingsBtn.addEventListener("click", async () => {
@@ -494,10 +530,10 @@
           voiceRecognitionEnabled = payload.voice_recognition;
           voiceWorkers = payload.voice_workers;
           syncModelSelect(model);
-          if (welcomeBanner && hasApiKeyConfigured) welcomeBanner.style.display = "none";
+          if (welcomeBanner && hasApiKeyConfigured) welcomeBanner.hidden = true;
           defaultAiActMode = payload.default_ai_act_mode;
           renderModeWarning();
-          settingsModal.classList.remove("active");
+          closeModal();
           showToast(t(saved.key_unchecked ? "toast.api_key_unchecked" : "toast.settings_saved"));
           pollStatus();
         } else {
@@ -546,14 +582,14 @@
     function openAttachmentsAccordion() {
       if (!attachmentsAccordion) return;
       attachmentsAccordion.classList.add("open");
-      attachmentsPanel.style.display = "block";
+      attachmentsPanel.hidden = false;
       attachmentsToggle.setAttribute("aria-expanded", "true");
     }
 
     function closeAttachmentsAccordion() {
       if (!attachmentsAccordion) return;
       attachmentsAccordion.classList.remove("open");
-      attachmentsPanel.style.display = "none";
+      attachmentsPanel.hidden = true;
       attachmentsToggle.setAttribute("aria-expanded", "false");
     }
 
@@ -567,10 +603,10 @@
       const hasChat = chatInput && chatInput.value.trim().length > 0;
 
       if (imgCount === 0 && !hasChat) {
-        attachmentsCountBadge.style.display = "none";
+        attachmentsCountBadge.hidden = true;
         attachmentsAccordion.classList.remove("has-content");
       } else {
-        attachmentsCountBadge.style.display = "inline-block";
+        attachmentsCountBadge.hidden = false;
         attachmentsAccordion.classList.add("has-content");
         if (imgCount > 0 && hasChat) {
           attachmentsCountBadge.innerText = t("attachments.badge_with_chat", { images: t("attachments.badge_images", { count: imgCount }) });
@@ -587,7 +623,7 @@
       const len = chatInput.value.length;
       chatCharCount.innerText = t("attachments.char_count", { count: len });
       if (clearChatBtn) {
-        clearChatBtn.style.display = len > 0 ? "inline-block" : "none";
+        clearChatBtn.hidden = len === 0;
       }
       updateAttachmentsBadge();
     }
@@ -611,18 +647,18 @@
 
       if (tabName === "chat") {
         if (attTabChat) attTabChat.classList.add("active");
-        colChat.style.display = "flex";
-        colImages.style.display = "none";
+        colChat.hidden = false;
+        colImages.hidden = true;
         attachmentsGrid.style.gridTemplateColumns = "1fr";
       } else if (tabName === "images") {
         if (attTabImages) attTabImages.classList.add("active");
-        colChat.style.display = "none";
-        colImages.style.display = "flex";
+        colChat.hidden = true;
+        colImages.hidden = false;
         attachmentsGrid.style.gridTemplateColumns = "1fr";
       } else {
         if (attTabBoth) attTabBoth.classList.add("active");
-        colChat.style.display = "flex";
-        colImages.style.display = "flex";
+        colChat.hidden = false;
+        colImages.hidden = false;
         attachmentsGrid.style.gridTemplateColumns = "";
       }
     }
@@ -689,20 +725,13 @@
 
     function renderThumbnails() {
       if (!thumbnailsContainer) return;
-      thumbnailsContainer.innerHTML = "";
+      thumbnailsContainer.replaceChildren();
       if (tabImgCount) {
-        tabImgCount.innerText = "0";
-        tabImgCount.style.display = "none";
+        tabImgCount.textContent = String(attachedImages.length);
+        tabImgCount.hidden = attachedImages.length === 0;
       }
-      if (attachedImages.length === 0) {
-        thumbnailsContainer.style.display = "none";
-        return;
-      }
-      thumbnailsContainer.style.display = "grid";
-      if (tabImgCount) {
-        tabImgCount.innerText = attachedImages.length;
-        tabImgCount.style.display = attachedImages.length > 0 ? "inline-block" : "none";
-      }
+      thumbnailsContainer.hidden = attachedImages.length === 0;
+      if (attachedImages.length === 0) return;
       attachedImages.forEach((img, idx) => {
         const card = el("div", "thumbnail-card");
         card.title = t("attachments.thumbnail_title", { name: img.filename, size: img.size });
@@ -740,14 +769,16 @@
     function openLightbox(src, caption) {
       if (!imageLightboxModal) return;
       lightboxImg.src = src;
-      lightboxCaption.innerText = caption || "";
-      imageLightboxModal.style.display = "flex";
+      lightboxCaption.textContent = caption || "";
+      imageLightboxModal.hidden = false;
+      overlayOpened(imageLightboxModal, closeLightboxBtn);
     }
 
     function closeLightbox() {
-      if (!imageLightboxModal) return;
-      imageLightboxModal.style.display = "none";
-      lightboxImg.src = "";
+      if (!imageLightboxModal || imageLightboxModal.hidden) return;
+      imageLightboxModal.hidden = true;
+      lightboxImg.removeAttribute("src");
+      overlayClosed(imageLightboxModal);
     }
 
     if (closeLightboxBtn) closeLightboxBtn.addEventListener("click", closeLightbox);
@@ -759,7 +790,7 @@
     // Dropzone handlers
     if (dropZone && fileAttachmentInput) {
       dropZone.addEventListener("click", () => fileAttachmentInput.click());
-      
+
       ["dragenter", "dragover"].forEach(eventName => {
         dropZone.addEventListener(eventName, (e) => {
           e.preventDefault();
@@ -833,7 +864,7 @@
       if (!contextRecording) return; // chat and slides are added after the recording
       const activeEl = document.activeElement;
       const isInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.isContentEditable);
-      
+
       // If user is currently typing in an input/textarea, let the browser handle it naturally
       if (isInput) return;
 
@@ -884,11 +915,27 @@
     });
 
     // Toggle Record
-    const selectedDevice = (select) => (select.value === "" ? null : Number(select.value));
+    const selectedDevice = (select) => (select.value === "" ? null : select.value);
+
+    // One request at a time: a double click must not start, stop or analyze twice
+    let recordRequestPending = false;
 
     recordToggleBtn.addEventListener("click", async () => {
+      if (recordRequestPending) return;
+      recordRequestPending = true;
+      recordToggleBtn.disabled = true;
+      try {
+        await handleRecordButton();
+      } finally {
+        await pollStatus(); // shows the new state right away instead of at the next poll
+        recordRequestPending = false;
+        recordToggleBtn.disabled = currentStatus === "processing";
+      }
+    });
+
+    async function handleRecordButton() {
       if (contextRecording && !isBusy()) {
-        startAnalysis();
+        await startAnalysis();
       } else if (!isBusy()) {
         if (!hasApiKeyConfigured) {
           openSettings();
@@ -928,7 +975,7 @@
           alertDialog(t("alert.network_error", { message: e }));
         }
       }
-    });
+    }
 
     // Cancel Record
     cancelRecordBtn.addEventListener("click", async () => {
@@ -1061,6 +1108,14 @@
     function visibleMarkdown() {
       return transcriptHasTranslation ? transcriptVariant(rawCurrentMarkdown, transcriptLanguage) : rawCurrentMarkdown;
     }
+
+    // Links in the minutes open in a new tab, so the web interface keeps its state
+    DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+      if (node.tagName === "A" && node.getAttribute("href")) {
+        node.setAttribute("target", "_blank");
+        node.setAttribute("rel", "noopener noreferrer");
+      }
+    });
 
     function renderMarkdown() {
       markdownBody.innerHTML = DOMPurify.sanitize(marked.parse(visibleMarkdown()));
@@ -1324,10 +1379,10 @@
 
         if (data.audio_url) {
           audioElement.src = data.audio_url;
-          audioPlayerSection.style.display = "flex";
+          audioPlayerSection.hidden = false;
         } else {
           audioElement.removeAttribute("src");
-          audioPlayerSection.style.display = "none";
+          audioPlayerSection.hidden = true;
         }
 
         renderMarkdown();
@@ -1613,6 +1668,8 @@
     }
 
     laterBtn.addEventListener("click", async () => {
+      if (laterBtn.disabled) return;
+      laterBtn.disabled = true;
       try {
         const res = await fetch(`/api/recordings/${encodeURIComponent(contextRecording)}/context`, {
           method: "PUT",
@@ -1628,6 +1685,8 @@
         fetchUnprocessed();
       } catch (err) {
         alertDialog(t("alert.network_error", { message: err }));
+      } finally {
+        laterBtn.disabled = false;
       }
     });
 
@@ -1653,8 +1712,8 @@
       }
     }
 
-    // Audio devices: "" = Windows default, otherwise the device index
-    const deviceLabel = (name) => name.replace(" [Loopback]", "");
+    // Audio devices: "" = the default device of the system, otherwise the device id
+    const deviceLabel = (name) => name.replace(" [Loopback]", "").replace(/^Monitor of /, "");
 
     // Replaces only the options: the <button> in front of them shows the (truncated) selection
     function setDeviceOptions(select, options) {
@@ -1666,10 +1725,10 @@
       const saved = localStorage.getItem(storageKey) || "";
       const defaultDevice = devices.find(d => d.default);
       setDeviceOptions(select, [
-        new Option(defaultDevice ? t("devices.default", { name: deviceLabel(defaultDevice.name) }) : t("devices.windows_default"), ""),
-        ...devices.filter(d => !d.default).map(d => new Option(deviceLabel(d.name), String(d.index))),
+        new Option(defaultDevice ? t("devices.default", { name: deviceLabel(defaultDevice.name) }) : t("devices.system_default"), ""),
+        ...devices.filter(d => !d.default).map(d => new Option(deviceLabel(d.name), d.id)),
       ]);
-      select.value = devices.some(d => !d.default && String(d.index) === saved) ? saved : "";
+      select.value = devices.some(d => !d.default && d.id === saved) ? saved : "";
     }
 
     async function loadDevices() {
@@ -1777,13 +1836,8 @@
       const query = (searchInput ? searchInput.value : "").trim();
       removeHighlights(markdownBody);
 
-      if (!activeMeetingId) {
-        if (searchMatchBadge) searchMatchBadge.style.display = "none";
-        return;
-      }
-
-      if (query.length < 2) {
-        if (searchMatchBadge) searchMatchBadge.style.display = "none";
+      if (!activeMeetingId || query.length < 2) {
+        if (searchMatchBadge) searchMatchBadge.hidden = true;
         return;
       }
 
@@ -1792,15 +1846,9 @@
       if (transcript && transcript.querySelector("mark.search-highlight")) transcript.open = true; // show hits inside
 
       if (searchMatchBadge) {
-        if (count > 0) {
-          searchMatchBadge.textContent = t("viewer.search_matches", { count });
-          searchMatchBadge.className = "search-match-badge found";
-          searchMatchBadge.style.display = "inline-flex";
-        } else {
-          searchMatchBadge.textContent = t("viewer.no_search_match");
-          searchMatchBadge.className = "search-match-badge none";
-          searchMatchBadge.style.display = "inline-flex";
-        }
+        searchMatchBadge.textContent = count > 0 ? t("viewer.search_matches", { count }) : t("viewer.no_search_match");
+        searchMatchBadge.className = `search-match-badge ${count > 0 ? "found" : "none"}`;
+        searchMatchBadge.hidden = false;
       }
 
       if (shouldScroll && count > 0) {
@@ -1815,7 +1863,7 @@
 
     searchInput.addEventListener("input", () => {
       const q = (searchInput.value || "").trim();
-      if (clearSearchBtn) clearSearchBtn.style.display = q ? "flex" : "none";
+      if (clearSearchBtn) clearSearchBtn.hidden = !q;
       renderMeetingsList();
       applyViewerSearchHighlight(false);
     });
@@ -1823,7 +1871,7 @@
     searchInput.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         searchInput.value = "";
-        if (clearSearchBtn) clearSearchBtn.style.display = "none";
+        if (clearSearchBtn) clearSearchBtn.hidden = true;
         renderMeetingsList();
         applyViewerSearchHighlight(false);
       }
@@ -1832,7 +1880,7 @@
     if (clearSearchBtn) {
       clearSearchBtn.addEventListener("click", () => {
         searchInput.value = "";
-        clearSearchBtn.style.display = "none";
+        clearSearchBtn.hidden = true;
         renderMeetingsList();
         applyViewerSearchHighlight(false);
         searchInput.focus();
@@ -1926,9 +1974,9 @@
             timerDisplay.innerText = formatTime(data.duration);
             recordToggleBtn.className = "record-btn stop";
             recordBtnText.innerText = t("record.stop");
-            cancelRecordBtn.style.display = "flex";
-            pulseRing.style.display = "block";
-            processingBanner.style.display = "none";
+            cancelRecordBtn.hidden = false;
+            pulseRing.hidden = false;
+            processingBanner.hidden = true;
             meetingTitleInput.disabled = true;
             meetingParticipantsInput.disabled = true;
             meetingTypeSelect.disabled = true;
@@ -1947,9 +1995,9 @@
             recordToggleBtn.className = "record-btn";
             recordToggleBtn.disabled = true;
             recordBtnText.innerText = t("record.analyzing");
-            cancelRecordBtn.style.display = "none";
-            pulseRing.style.display = "none";
-            processingBanner.style.display = "flex";
+            cancelRecordBtn.hidden = true;
+            pulseRing.hidden = true;
+            processingBanner.hidden = false;
             processStepText.innerText = data.process_step || t("processing.default_step");
             meetingTitleInput.disabled = true;
             meetingParticipantsInput.disabled = true;
@@ -1961,9 +2009,9 @@
             recordToggleBtn.disabled = false;
             recordToggleBtn.className = contextRecording ? "record-btn start analyze" : "record-btn start";
             recordBtnText.innerText = t(contextRecording ? "record.analyze" : "record.start");
-            cancelRecordBtn.style.display = "none";
-            pulseRing.style.display = "none";
-            processingBanner.style.display = "none";
+            cancelRecordBtn.hidden = true;
+            pulseRing.hidden = true;
+            processingBanner.hidden = true;
             meetingTitleInput.disabled = false;
             meetingParticipantsInput.disabled = false;
             meetingTypeSelect.disabled = false;
@@ -1982,6 +2030,7 @@
             }
           }
 
+          appVersion.textContent = data.version ? `GhostScribe ${data.version}` : "";
           voiceRecognitionEnabled = data.voice_recognition;
           voiceWorkers = data.voice_workers;
           voiceWorkersMax = data.voice_workers_max;
@@ -2017,7 +2066,13 @@
     }
 
     async function initLanguage() {
-      const { current, available } = await (await fetch("/api/languages")).json();
+      let current = null;
+      let available = { en: "English" };
+      try {
+        ({ current, available } = await (await fetch("/api/languages")).json());
+      } catch (err) {
+        console.error("Loading the languages failed:", err);
+      }
       languageSelect.replaceChildren(...Object.entries(available).map(([code, name]) => new Option(name, code)));
       let language = current;
       if (!language) {
@@ -2052,11 +2107,15 @@
       pollStatus();
     });
 
-    // Initialize
+    // Initialize: the level meters need a fast poll while recording; a tab in the background polls rarely
     async function pollLoop() {
       await pollStatus();
-      setTimeout(pollLoop, 300);
+      setTimeout(pollLoop, document.hidden ? 5000 : isBusy() ? 300 : 1000);
     }
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) pollStatus();
+    });
 
     (async () => {
       await initLanguage();
