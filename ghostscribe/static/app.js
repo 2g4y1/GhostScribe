@@ -19,6 +19,9 @@
     let voiceRecognitionEnabled = false;
     let voiceWorkers = 1; // parallel processes for the voice recognition, at most voiceWorkersMax
     let voiceWorkersMax = 1;
+    let appEdition = "private"; // "company": no sentiment mode, consent before every recording
+    let keepAudioDays = 0; // audio of analyzed meetings is deleted after this many days; 0 keeps it
+    const KEEP_AUDIO_CHOICES = [0, 7, 30, 90, 365];
     const CHEVRON_ICON = '<svg class="chevron" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>';
     const PLAY_ICON = '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z" /></svg>';
     const TRASH_ICON = '<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>';
@@ -200,6 +203,8 @@
     const participantsField = document.getElementById("participantsField");
     const meetingTypeSelect = document.getElementById("meetingTypeSelect");
     const cancelRecordBtn = document.getElementById("cancelRecordBtn");
+    const recordingConsent = document.getElementById("recordingConsent");
+    const recordingConsentCheckbox = document.getElementById("recordingConsentCheckbox");
     const pauseRecordBtn = document.getElementById("pauseRecordBtn");
     const pauseBtnText = document.getElementById("pauseBtnText");
     const recordToggleBtn = document.getElementById("recordToggleBtn");
@@ -370,6 +375,8 @@
     const apiKeyHint = document.getElementById("apiKeyHint");
     const defaultAiActSelect = document.getElementById("defaultAiActSelect");
     const modeHint = document.getElementById("modeHint");
+    const modeGroup = document.getElementById("modeGroup");
+    const keepAudioSelect = document.getElementById("keepAudioSelect");
     const sentimentModeWarning = document.getElementById("sentimentModeWarning");
 
     // Sentiment Warning Confirmation Modal Elements
@@ -436,8 +443,14 @@
     }
 
     function updateSettingsModalUI() {
+      modeGroup.hidden = appEdition === "company"; // the company edition has no sentiment mode
       defaultAiActSelect.value = defaultAiActMode ? "true" : "false";
       renderModeHint();
+      const keepChoices = [...new Set([...KEEP_AUDIO_CHOICES, keepAudioDays])].sort((a, b) => (a || Infinity) - (b || Infinity));
+      keepAudioSelect.replaceChildren(
+        ...keepChoices.map((days) => new Option(days ? t("settings.keep_audio_days", { count: days }) : t("settings.keep_audio_forever"), String(days)))
+      );
+      keepAudioSelect.value = String(keepAudioDays);
       voiceRecognitionSelect.value = voiceRecognitionEnabled ? "true" : "false";
       voiceWorkersSelect.replaceChildren(
         ...Array.from({ length: voiceWorkersMax }, (_, i) => new Option(i18n.number(i + 1), String(i + 1)))
@@ -506,6 +519,7 @@
       const payload = {
         model: model,
         default_ai_act_mode: defaultAiActSelect.value === "true",
+        keep_audio_days: Number(keepAudioSelect.value),
         voice_recognition: voiceRecognitionSelect.value === "true",
         voice_workers: Number(voiceWorkersSelect.value)
       };
@@ -531,6 +545,7 @@
           currentConfiguredModel = model;
           voiceRecognitionEnabled = payload.voice_recognition;
           voiceWorkers = payload.voice_workers;
+          keepAudioDays = payload.keep_audio_days;
           syncModelSelect(model);
           if (welcomeBanner && hasApiKeyConfigured) welcomeBanner.hidden = true;
           defaultAiActMode = payload.default_ai_act_mode;
@@ -943,6 +958,11 @@
           openSettings();
           return;
         }
+        if (appEdition === "company" && !recordingConsentCheckbox.checked) {
+          showToast(t("toast.recording_consent_missing"));
+          recordingConsentCheckbox.focus();
+          return;
+        }
         const title = meetingTitleInput.value.trim();
         const participants = participantsValue();
         const meetingType = meetingTypeSelect.value;
@@ -957,11 +977,14 @@
               meeting_type: meetingType,
               user_name: userName,
               ai_act_mode: defaultAiActMode,
+              consent: recordingConsentCheckbox.checked,
               mic_device: selectedDevice(micSelect),
               loopback_device: selectedDevice(loopbackSelect)
             })
           });
-          if (!res.ok) {
+          if (res.ok) {
+            recordingConsentCheckbox.checked = false; // the next meeting needs its own consent
+          } else {
             alertDialog(t("alert.start_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           }
         } catch (e) {
@@ -1068,6 +1091,7 @@
       const modeBadge = el("span", `badge-tag ${isAiAct ? "ai-act" : "sentiment"}`, t(isAiAct ? "viewer.badge_ai_act" : "viewer.badge_sentiment"));
       modeBadge.title = t(isAiAct ? "viewer.badge_ai_act_title" : "viewer.badge_sentiment_title");
       const details = [t("viewer.meeting_on", { date: meetingDate(meta, { dateStyle: "long", timeStyle: "short" }) }), t("viewer.model", { model: meta.model_used })];
+      if (meta.audio_deleted) details.push(t("viewer.audio_deleted"));
       // Lines break between the details and between the chips, never inside them
       const detailsLine = el("span");
       details.forEach((text, index) => detailsLine.append(index ? " • " : "", el("span", "viewer-detail", text)));
@@ -1296,6 +1320,7 @@
       play.type = "button";
       play.innerHTML = PLAY_ICON;
       play.append(t("viewer.voice_play"));
+      play.hidden = Boolean(activeMeetingMeta?.audio_deleted); // nothing to play after the retention period
       play.addEventListener("click", () => {
         audioElement.currentTime = voice.intervals[0][0];
         audioElement.play();
@@ -2062,7 +2087,10 @@
             }
           }
 
-          appVersion.textContent = data.version ? `GhostScribe ${data.version}` : "";
+          appEdition = data.edition || "private";
+          keepAudioDays = data.keep_audio_days ?? 0;
+          appVersion.textContent = data.version ? `GhostScribe ${data.version}${appEdition === "company" ? " · Company" : ""}` : "";
+          recordingConsent.hidden = appEdition !== "company" || isBusy() || Boolean(contextRecording);
           voiceRecognitionEnabled = data.voice_recognition;
           voiceWorkers = data.voice_workers;
           voiceWorkersMax = data.voice_workers_max;

@@ -72,5 +72,8 @@ check that every language has the same keys and placeholders as English, and tha
 
 1. Set the new version in `ghostscribe/__init__.py` and move the "Unreleased" entries of the changelog to it.
 2. Tag the commit on `main` with `v<version>` and push the tag.
-3. The release workflow builds `GhostScribe-v<version>.zip` (byte-identical for the same commit), its SHA-256
-   checksum and a signed build provenance, and creates a draft release. Check the draft and publish it.
+3. The release workflow builds `GhostScribe-v<version>.zip` (private edition) and `GhostScribe-Company-v<version>.zip`
+   (company edition, which only adds the file `ghostscribe/EDITION`), byte-identical for the same commit, with their
+   SHA-256 checksums and a signed build provenance, and creates a draft release. Check the draft and publish it.
+   `python scripts/build_release.py` builds both locally. To try the company edition from source, put the word
+   `company` into `ghostscribe/EDITION`; the file is ignored by git and never packed into the private archive.

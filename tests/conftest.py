@@ -55,3 +55,13 @@ def write_file(workdir):
         return path
 
     return write
+
+
+@pytest.fixture
+def company(tmp_path, monkeypatch):
+    """The company edition, with the marker its release archive installs."""
+    from ghostscribe import edition
+
+    marker = tmp_path / "EDITION"
+    marker.write_text("company\n", encoding="utf-8")
+    monkeypatch.setattr(edition, "EDITION_FILE", marker)

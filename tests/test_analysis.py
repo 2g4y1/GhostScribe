@@ -12,6 +12,8 @@ from ghostscribe import analyzer
 from ghostscribe.analyzer import MeetingAnalyzer
 from ghostscribe.i18n import LocalizedError
 
+from fakes import Clock
+
 MINUTES = "# 📝 Besprechungsprotokoll: Budget 2027\n\n## 🎯 Management Summary\nText"
 
 
@@ -128,6 +130,22 @@ def test_gemini_learns_where_the_recording_was_paused(tmp_path, audio):
     assert "Pausen:" not in without
 
 
+def test_the_company_edition_analyzes_without_emotions_or_assessing_people(tmp_path, audio, company):
+    models = FakeModels(response())
+
+    result, _, _ = analyze(tmp_path, audio, models, meeting_type="interview", ai_act_mode=False)
+
+    request = models.requests[0]
+    assert "Stimmung & Tonalität" not in request["config"].system_instruction  # asked for, but not available
+    assert "bewerte die befragte Person nicht" in request["contents"][-1]
+    assert "Kandidatenprofil" not in request["contents"][-1]
+    assert result["metadata"]["ai_act_mode"] is True
+    minutes = (tmp_path / "meetings" / "meeting_2026-09-29_15-17-28.md").read_text(encoding="utf-8")
+    assert minutes.startswith(MINUTES.rstrip()) and minutes.endswith(
+        "(configured-model). Vor der Weitergabe prüfen.*\n"
+    )
+
+
 def test_a_generic_title_is_replaced_by_the_topic_of_the_minutes(tmp_path, audio):
     result, _, steps = analyze(tmp_path, audio, FakeModels(response()), meeting_title="Teams Besprechung")
 
@@ -189,11 +207,15 @@ def test_audio_that_google_cannot_process_is_reported(tmp_path, audio):
 
 
 def test_processing_that_does_not_finish_gives_up(tmp_path, audio, monkeypatch):
-    monkeypatch.setattr(analyzer, "PROCESSING_TIMEOUT", 0)
-    monkeypatch.setattr(analyzer.time, "sleep", lambda seconds: None)
-    files = FakeFiles(states=["PROCESSING"] * 10)
+    # Only the waiting moves the clock: the real one advances in 16 ms steps on Windows before Python 3.13, so a
+    # timeout of 0 seconds could pass unnoticed while the test runs through all states within one step
+    clock = Clock()
+    monkeypatch.setattr(analyzer, "PROCESSING_TIMEOUT", 120)
+    monkeypatch.setattr(analyzer.time, "monotonic", clock)
+    monkeypatch.setattr(analyzer.time, "sleep", lambda seconds: setattr(clock, "now", clock.now + seconds))
+    files = FakeFiles(states=["PROCESSING"] * 100)
 
-    with pytest.raises(LocalizedError, match="0 minutes"):
+    with pytest.raises(LocalizedError, match="2 minutes"):
         analyze(tmp_path, audio, FakeModels(response()), files=files)
 
     assert files.deleted == ["files/1"]

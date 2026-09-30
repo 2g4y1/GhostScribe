@@ -19,6 +19,7 @@ import numpy as np
 from google import genai
 from google.genai import errors, types
 
+from ghostscribe import edition
 from ghostscribe.i18n import LocalizedError
 from ghostscribe.utils import format_duration, write_json_atomic, write_text_atomic
 from ghostscribe.voices import recognize_voices, voice_context
@@ -66,6 +67,31 @@ MEETING_TYPE_FOCUS: dict[str, str] = {
         "| # | Idee | eingebracht von | Pro | Contra | Resonanz | Status (priorisiert/weiterverfolgen/verworfen/offen) |"
     ),
 }
+
+
+# Company edition: an interview is documented without assessing the person. Evaluating candidates with AI is a
+# high-risk use under the EU AI Act (Annex III no. 4), which comes with obligations that a meeting tool cannot meet.
+NEUTRAL_INTERVIEW_FOCUS = (
+    "Fokus: Fragen und Antworten je Thema, Vereinbarungen, offene Punkte und nächste Schritte. Halte fest, was "
+    "gesagt wurde, und bewerte die befragte Person nicht: keine Einschätzung von Stärken, Schwächen, Eignung, "
+    "Persönlichkeit oder Gesamteindruck.\n"
+    "Füge nach „Offene Fragen & nächste Schritte“ ein:\n"
+    "## 👤 Gesprächsverlauf\n"
+    "| Thema | Frage | Antwort | [Zeit] |\n"
+    "Danach: Vereinbarungen, Fragen der befragten Person und nächste Schritte."
+)
+
+# Company edition: the minutes say that they were generated and must be checked
+GENERATED_NOTE = (
+    "\n\n---\n*Automatisch erstellt mit GhostScribe und Google Gemini ({model}). Vor der Weitergabe prüfen.*\n"
+)
+
+
+def type_focus(meeting_type: str) -> str:
+    """Additional instructions for the type of meeting; in the company edition interviews stay neutral."""
+    if meeting_type == "interview" and edition.is_company():
+        return NEUTRAL_INTERVIEW_FOCUS
+    return MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
 
 
 # What stands in front of the title in the first heading of the minutes, e.g. "📝 Besprechungsprotokoll: "
@@ -239,8 +265,9 @@ _PROMPT_VARIANTS = {
 
 
 def default_ai_act_mode() -> bool:
-    """AI_ACT_MODE from .env: the EU AI Act compliant mode unless it is explicitly "false"."""
-    return os.getenv("AI_ACT_MODE", "true").strip().lower() != "false"
+    """AI_ACT_MODE from .env: the EU AI Act compliant mode unless it is explicitly "false" (never in the company
+    edition)."""
+    return edition.is_company() or os.getenv("AI_ACT_MODE", "true").strip().lower() != "false"
 
 
 def get_system_instruction(ai_act_mode: bool = True) -> str:
@@ -423,7 +450,7 @@ def build_user_prompt(
     cuts: list[str] | None = None,
 ) -> str:
     """The request for one recording: context, focus of the meeting type, channel timeline, voices, chat, slides."""
-    specific_focus = MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
+    specific_focus = type_focus(meeting_type)
     channel_block = ""
     if channel_analysis:
         channel_block = f"""
@@ -606,6 +633,7 @@ class MeetingAnalyzer:
         if not os.path.exists(audio_filepath):
             raise LocalizedError("error.audio_file_missing", path=audio_filepath)
 
+        ai_act_mode = bool(ai_act_mode) or edition.is_company()  # the company edition has no sentiment mode
         user_label = user_name.strip() if user_name and user_name.strip() else "Ich"
         duration = duration or recording_duration(audio_filepath)
         uploaded_remote_files: list = []
@@ -671,6 +699,8 @@ class MeetingAnalyzer:
             md_filename = os.path.join(self.meetings_dir, f"{base_name}.md")
             json_filename = os.path.join(self.meetings_dir, f"{base_name}.json")
 
+            if edition.is_company():
+                markdown_content = markdown_content.rstrip() + GENERATED_NOTE.format(model=self.model)
             write_text_atomic(md_filename, markdown_content)
 
             extracted_title = extract_title_from_markdown(markdown_content)

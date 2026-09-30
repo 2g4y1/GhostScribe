@@ -39,7 +39,7 @@ GhostScribe records your microphone and your computer's audio output as two sepa
 
 ## Installation
 
-1. Download `GhostScribe-v<version>.zip` from the [latest release](../../releases/latest) and extract it. The release page also lists its SHA-256 checksum.
+1. Download `GhostScribe-v<version>.zip` from the [latest release](../../releases/latest) and extract it; for a company or another organization, take `GhostScribe-Company-v<version>.zip` (see [Private and company edition](#private-and-company-edition)). The release page also lists the SHA-256 checksums.
 2. Start GhostScribe. The first start creates a virtual environment and installs the dependencies (every package is checked against its pinned checksum); no admin rights are needed.
    - **Windows:** double-click `start.bat`.
    - **macOS:** double-click `start.command`. The first time, macOS may refuse to open a downloaded script: right-click it, choose **Open** and confirm. Allow the Terminal to use the microphone when macOS asks.
@@ -57,6 +57,29 @@ To run from source instead, clone the repository and start it in the same way. `
 ### macOS: recording the system audio
 
 macOS cannot record what the other participants say by itself. Install the free virtual audio device [BlackHole](https://github.com/ExistentialAudio/BlackHole) (2ch), then open **Audio MIDI Setup**, create a **Multi-Output Device** with your speakers or headset plus BlackHole 2ch, and select it as the sound output (or as the speaker in Teams/Zoom). You keep hearing the meeting, and GhostScribe selects BlackHole as the playback device automatically.
+
+## Private and company edition
+
+Each release comes in two editions, built from the same code:
+
+| | Private: `GhostScribe-v<version>.zip` | Company: `GhostScribe-Company-v<version>.zip` |
+|---|---|---|
+| Sentiment mode | optional, switched on in the settings at your own responsibility | not available: the EU AI Act prohibits emotion recognition at the workplace, which also covers volunteers, trainees and candidates |
+| Before each recording | nothing to confirm | the confirmation that all participants were told and agreed |
+| Interview template | assesses the candidate | documents questions and answers without assessing the person |
+| Minutes | as written by Gemini | end with a note that they were generated and must be checked |
+| Audio of analyzed meetings | kept until you delete it | deleted 30 days after the analysis by default (setting "Keep recordings"); the minutes stay |
+
+The company edition is marked by the file `ghostscribe/EDITION` in its archive, not by `.env`, so its rules cannot be switched off by accident in the settings. For an organization, also:
+
+- Use a Gemini API key of a Google Cloud project with billing enabled (paid tier). Only then does Google process the content under its data processing addendum and not use it to improve its products.
+- Add the processing to your records of processing activities, and check whether a data protection impact assessment is needed, especially with voice profiles (biometric data).
+- Encrypt the disks of the computers that record, and brief the people who use GhostScribe (AI literacy, Art. 4 EU AI Act).
+- Announce the recording in the invitation, for example:
+
+  > **Recording:** We record this meeting with GhostScribe to write the minutes. The audio stays on the recording computer and is deleted after 30 days; for the minutes it is sent to Google Gemini (Google Cloud, under a data processing agreement). If you do not agree, please say so at the start, and we will not record.
+
+  > **Aufzeichnung:** Wir zeichnen dieses Meeting mit GhostScribe auf, um das Protokoll zu erstellen. Die Aufnahme bleibt auf dem aufnehmenden Rechner und wird nach 30 Tagen gelöscht; für das Protokoll wird sie an Google Gemini übermittelt (Google Cloud, mit Auftragsverarbeitungsvertrag). Wer nicht einverstanden ist, sagt es bitte zu Beginn, dann nehmen wir nicht auf.
 
 ## Usage
 
@@ -81,7 +104,8 @@ Settings are stored in `.env`, which is created from `.env.example` and can be e
 |---|---|---|
 | `GEMINI_API_KEY` | | Google Gemini API key |
 | `GEMINI_MODEL` | `gemini-flash-latest` | Gemini model used for the minutes |
-| `AI_ACT_MODE` | `true` | Default mode: `true` is EU AI Act compliant, `false` adds sentiment analysis |
+| `AI_ACT_MODE` | `true` | Default mode: `true` is EU AI Act compliant, `false` adds sentiment analysis (private edition only) |
+| `KEEP_AUDIO_DAYS` | `0` (company edition: `30`) | Days after the analysis when the audio of a meeting is deleted, checked at every start and after every analysis; `0` keeps it. The minutes and recordings that were not analyzed yet always stay |
 | `UI_LANGUAGE` | browser language | Interface language, for example `en` or `de` |
 | `VOICE_RECOGNITION` | `false` | Local voice recognition and voice profiles |
 | `VOICE_WORKERS` | `1` | Parallel processes for the voice recognition of long recordings (at most half of the logical processors) |
@@ -93,10 +117,10 @@ Each language is one JSON file in `ghostscribe/static/locales/`. Copy `en.json` 
 ## Privacy and legal notes
 
 - Recordings (`recordings/`) and minutes (`meetings/`) are stored locally only. The web interface is only reachable from this computer (127.0.0.1) and rejects requests from other websites.
-- For the analysis, the audio file, the attached screenshots and the entered context (topic, participants, chat and notes) are sent to the Google Gemini API; uploaded files are deleted there afterwards. [Google's API terms](https://ai.google.dev/gemini-api/terms) apply; on the free tier, Google may use submitted content to improve its products.
+- For the analysis, the audio file, the attached screenshots and the entered context (topic, participants, chat and notes) are sent to the Google Gemini API; uploaded files are deleted there afterwards. [Google's API terms](https://ai.google.dev/gemini-api/terms) apply; on the free tier, Google may use submitted content to improve its products (except for users in the EEA, Switzerland and the UK, for whom the terms of the paid tier apply).
 - **Inform all participants and get their consent before recording.** Recording conversations without consent is a criminal offence in many countries (for example § 201 StGB in Germany), and processing voice data is subject to the GDPR.
 - Voice recognition is off by default and runs entirely on this computer. Its models (about 45 MB, [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) with pyannote segmentation 3.0 and NVIDIA NeMo TitaNet) are downloaded once into `models/` and checked against their SHA-256 checksums. Voice profiles are biometric data (Art. 9 GDPR): they are only saved after you confirm the person's consent, stay in `voices/` and can be deleted in the settings.
-- The EU AI Act prohibits emotion recognition in the workplace and in education (Art. 5(1)(f)). Keep the default mode for meetings at work or in education.
+- The EU AI Act prohibits emotion recognition in the workplace and in education (Art. 5(1)(f)). Keep the default mode for meetings at work or in education, or use the [company edition](#private-and-company-edition), which has no sentiment mode.
 
 ## Development
 

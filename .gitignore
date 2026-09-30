@@ -36,6 +36,9 @@ meetings/*
 models/
 voices/
 
+# Marker of the company edition: added by the release build, only local for trying it out
+ghostscribe/EDITION
+
 # Release builds (published as GitHub release assets, never committed)
 dist/
 *.zip

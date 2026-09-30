@@ -196,6 +196,12 @@
         </div>
       </div>
 
+      <!-- Company edition: every recording needs the consent of all participants -->
+      <label id="recordingConsent" class="recording-consent" hidden>
+        <input type="checkbox" id="recordingConsentCheckbox" />
+        <span data-i18n="record.consent"></span>
+      </label>
+
       <div class="record-actions-row">
         <div class="record-btn-container">
           <div id="pulseRing" class="pulse-ring" hidden></div>
@@ -373,13 +379,19 @@
         </select>
       </div>
 
-      <div class="form-group">
+      <div id="modeGroup" class="form-group">
         <label for="defaultAiActSelect" data-i18n="settings.mode"></label>
         <select id="defaultAiActSelect" class="form-input">
           <option value="true" data-i18n="settings.mode_ai_act"></option>
           <option value="false" data-i18n="settings.mode_sentiment"></option>
         </select>
         <span id="modeHint" class="form-hint"></span>
+      </div>
+
+      <div class="form-group">
+        <label for="keepAudioSelect" data-i18n="settings.keep_audio"></label>
+        <select id="keepAudioSelect" class="form-input"></select>
+        <span class="form-hint" data-i18n="settings.keep_audio_hint"></span>
       </div>
 
       <h3 class="settings-section" data-i18n="settings.voice_recognition"></h3>
