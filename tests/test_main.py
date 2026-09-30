@@ -1,6 +1,11 @@
+import io
 import subprocess
 import sys
 from pathlib import Path
+
+import uvicorn
+
+from ghostscribe import __main__ as entry
 
 SERVER = """
 import subprocess, sys
@@ -37,3 +42,15 @@ def test_version_and_help_on_the_command_line():
 
     assert version.stdout.startswith("GhostScribe ")
     assert "--cli" in usage.stdout and "--server" not in usage.stdout  # started by the console window only
+
+
+def test_ctrl_c_ends_the_server_without_a_traceback(monkeypatch):
+    """Uvicorn shuts down on Ctrl+C and then raises it again; the console window should not show that as a crash."""
+
+    def interrupted(server):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(uvicorn.Server, "run", interrupted)
+    monkeypatch.setattr(entry, "take_stdin", lambda: io.StringIO(""))
+
+    entry.run_server()  # returns normally
