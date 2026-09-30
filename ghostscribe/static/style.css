@@ -290,7 +290,8 @@
       box-shadow: 0 0 15px var(--rose-glow);
     }
 
-    .status-badge.warning {
+    .status-badge.warning,
+    .status-badge.paused {
       background: rgba(245, 158, 11, 0.15);
       border-color: rgba(245, 158, 11, 0.4);
       color: var(--amber);
@@ -802,7 +803,8 @@
       position: relative;
     }
 
-    .cancel-btn {
+    .cancel-btn,
+    .pause-btn {
       background: rgba(244, 63, 94, 0.1);
       border: 1px solid rgba(244, 63, 94, 0.3);
       color: #fda4af;
@@ -822,6 +824,49 @@
       background: rgba(244, 63, 94, 0.22);
       border-color: var(--rose);
       transform: translateY(-2px);
+    }
+
+    /* Pause: amber like everything that waits; the icon shows what a click does */
+    .pause-btn {
+      background: rgba(245, 158, 11, 0.1);
+      border-color: rgba(245, 158, 11, 0.3);
+      color: #fcd34d;
+    }
+
+    .pause-btn:hover {
+      background: rgba(245, 158, 11, 0.22);
+      border-color: var(--amber);
+      transform: translateY(-2px);
+    }
+
+    .pause-btn:disabled {
+      cursor: wait;
+      opacity: 0.7;
+      transform: none;
+    }
+
+    .pause-btn .icon-resume,
+    .pause-btn.paused .icon-pause {
+      display: none;
+    }
+
+    .pause-btn.paused .icon-resume {
+      display: inline;
+    }
+
+    .timer-display.paused {
+      color: var(--amber);
+      animation: timer-paused 1.6s ease-in-out infinite;
+    }
+
+    @keyframes timer-paused {
+      50% { opacity: 0.35; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .timer-display.paused {
+        animation: none;
+      }
     }
 
     .search-input-wrapper {
@@ -2741,7 +2786,8 @@
       .record-btn-container {
         width: 100%;
       }
-      .cancel-btn {
+      .cancel-btn,
+      .pause-btn {
         width: 100%;
         justify-content: center;
       }

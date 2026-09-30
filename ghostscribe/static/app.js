@@ -200,6 +200,8 @@
     const participantsField = document.getElementById("participantsField");
     const meetingTypeSelect = document.getElementById("meetingTypeSelect");
     const cancelRecordBtn = document.getElementById("cancelRecordBtn");
+    const pauseRecordBtn = document.getElementById("pauseRecordBtn");
+    const pauseBtnText = document.getElementById("pauseBtnText");
     const recordToggleBtn = document.getElementById("recordToggleBtn");
     const recordBtnText = document.getElementById("recordBtnText");
     const pulseRing = document.getElementById("pulseRing");
@@ -976,6 +978,28 @@
         }
       }
     }
+
+    // Pause and resume: the time in between is cut out of the recording
+    let recordingPaused = false;
+    let pauseRequestPending = false;
+
+    pauseRecordBtn.addEventListener("click", async () => {
+      if (pauseRequestPending) return;
+      pauseRequestPending = true;
+      pauseRecordBtn.disabled = true;
+      try {
+        const res = await fetch(recordingPaused ? "/api/record/resume" : "/api/record/pause", { method: "POST" });
+        if (!res.ok) {
+          alertDialog(t("alert.pause_failed", { message: errorText(await res.json().catch(() => ({}))) }));
+        }
+      } catch (e) {
+        alertDialog(t("alert.network_error", { message: e }));
+      } finally {
+        await pollStatus();
+        pauseRequestPending = false;
+        pauseRecordBtn.disabled = false;
+      }
+    });
 
     // Cancel Record
     cancelRecordBtn.addEventListener("click", async () => {
@@ -1968,14 +1992,22 @@
           }
 
           // Status & UI states
+          recordingPaused = data.status === "recording" && data.paused;
+          timerDisplay.classList.toggle("paused", recordingPaused);
+          pauseRecordBtn.hidden = data.status !== "recording";
           if (data.status === "recording") {
-            statusBadge.className = "status-badge recording";
-            statusText.innerText = t("status.recording");
+            statusBadge.className = recordingPaused ? "status-badge paused" : "status-badge recording";
+            statusText.innerText = t(recordingPaused ? "status.paused" : "status.recording");
             timerDisplay.innerText = formatTime(data.duration);
             recordToggleBtn.className = "record-btn stop";
             recordBtnText.innerText = t("record.stop");
+            pauseRecordBtn.classList.toggle("paused", recordingPaused);
+            pauseBtnText.innerText = t(recordingPaused ? "record.resume" : "record.pause");
+            // data-tooltip instead of title: the tooltips of the page read it, and it changes while the pointer rests there
+            pauseRecordBtn.dataset.tooltip = t(recordingPaused ? "record.resume_title" : "record.pause_title");
+            if (tooltipTarget === pauseRecordBtn) tooltip.textContent = pauseRecordBtn.dataset.tooltip;
             cancelRecordBtn.hidden = false;
-            pulseRing.hidden = false;
+            pulseRing.hidden = recordingPaused;
             processingBanner.hidden = true;
             meetingTitleInput.disabled = true;
             meetingParticipantsInput.disabled = true;

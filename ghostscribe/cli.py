@@ -4,6 +4,7 @@ Interactive terminal version of GhostScribe (python -m ghostscribe --cli).
 
 import contextlib
 import os
+import time
 
 from ghostscribe import keys
 from ghostscribe.analyzer import MeetingAnalyzer, default_ai_act_mode
@@ -13,6 +14,7 @@ from ghostscribe.utils import BANNER, format_duration, open_file, print_banner, 
 from ghostscribe.voices import configured_workers, recognition_enabled
 
 STOP_KEYS = ("\r", "\n", "q", " ")
+PAUSE_KEY = "p"
 
 
 def level_bar(level, width=15):
@@ -24,20 +26,32 @@ def print_step(key, **params):
     print(f"   → {translate(key, **params)}")
 
 
+def status_line(recorder: MeetingRecorder) -> str:
+    duration = format_duration(recorder.get_duration())
+    if recorder.paused:
+        return translate("cli.paused", duration=duration)
+    return translate(
+        "cli.levels", duration=duration, mic=level_bar(recorder.mic_level), playback=level_bar(recorder.loopback_level)
+    )
+
+
 def record(recorder: MeetingRecorder) -> None:
-    """Shows the levels until Enter, Q or Space (or Ctrl+C) stops the recording."""
+    """Shows the levels until Enter, Q or Space (or Ctrl+C) stops the recording; P pauses and resumes it."""
+    width = 0  # of the longest line so far: a shorter one overwrites all of it
     with keys.reading_keys() if keys.supported() else contextlib.nullcontext():
         try:
             while recorder.is_recording:
-                levels = translate(
-                    "cli.levels",
-                    duration=format_duration(recorder.get_duration()),
-                    mic=level_bar(recorder.mic_level),
-                    playback=level_bar(recorder.loopback_level),
-                )
-                print(levels, end="\r", flush=True)
-                if keys.supported() and keys.wait_for_key(0.15) in STOP_KEYS:
+                line = status_line(recorder)
+                width = max(width, len(line))
+                print(line.ljust(width), end="\r", flush=True)
+                if not keys.supported():
+                    time.sleep(0.15)
+                    continue
+                key = keys.wait_for_key(0.15)
+                if key in STOP_KEYS:
                     break
+                if key == PAUSE_KEY and not recorder.resume():
+                    recorder.pause()
         except KeyboardInterrupt:
             pass
 
@@ -88,6 +102,7 @@ def main():
         result = MeetingAnalyzer(api_key=api_key).analyze_meeting(
             audio_filepath=audio_path,
             meeting_title=title,
+            cuts=[format_duration(cut) for cut in recorder.cuts],
             on_status_update=print_step,
             ai_act_mode=default_ai_act_mode(),
             voice_recognition=recognition_enabled(),
