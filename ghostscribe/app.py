@@ -361,6 +361,8 @@ def _recording_heartbeat(started_at: float) -> None:
         time.sleep(5)
         if not recorder.is_recording or recorder.start_time != started_at:
             return
+        if recorder.paused:  # the pause was announced once
+            continue
         print(
             translate(
                 "terminal.heartbeat",
@@ -389,6 +391,7 @@ def get_status():
         "status": app_state["status"],
         "process_step": app_state["process_step"],
         "duration": recorder.get_duration(),
+        "paused": recorder.paused,
         "mic_level": recorder.mic_level,
         "loopback_level": recorder.loopback_level,
         "mic_device": recorder.mic.name if devices_in_use and recorder.mic else None,
@@ -491,6 +494,28 @@ def _recording_context(duration: str | None = None) -> dict:
     return context
 
 
+def _pause_recording(pause: bool) -> dict:
+    with _state_lock:
+        if app_state["status"] != "recording":
+            raise api_error(409, "api.no_active_recording")
+        changed = recorder.pause() if pause else recorder.resume()
+    if changed:  # a second click on the same button changes nothing
+        key = "terminal.recording_paused" if pause else "terminal.recording_resumed"
+        print(translate(key, duration=format_duration(recorder.get_duration())))
+    return {"success": True, "paused": recorder.paused}
+
+
+@app.post("/api/record/pause")
+def pause_recording():
+    """Pauses the recording: what happens until it is resumed is cut out of it."""
+    return _pause_recording(True)
+
+
+@app.post("/api/record/resume")
+def resume_recording():
+    return _pause_recording(False)
+
+
 @app.post("/api/record/cancel")
 def cancel_recording():
     with _state_lock:
@@ -577,6 +602,7 @@ def run_gemini_analysis(audio_path: str, context: dict) -> None:
             chat_text=context.get("chat_text", ""),
             image_filepaths=context.get("image_paths", []),
             duration=context.get("duration"),
+            cuts=context.get("cuts"),
             on_status_update=_set_step,
             ai_act_mode=context.get("ai_act_mode", True),
             voice_recognition=recognition_enabled(),
@@ -622,6 +648,8 @@ def stop_recording(background_tasks: BackgroundTasks):
         if app_state["status"] != "recording" or not recorder.stop_capture():
             raise api_error(409, "api.no_active_recording")
         context = _recording_context(format_duration(recorder.duration))
+        if recorder.cuts:  # tells Gemini where parts of the meeting are missing
+            context["cuts"] = [format_duration(cut) for cut in recorder.cuts]
         try:
             _save_context(recorder.base_name or "", context)
         except OSError as e:  # the context saved at the start stays; the analysis works without the duration

@@ -17,6 +17,8 @@ The first release.
 - Crash-safe recording: the audio is written to disk while recording, and a recording that was interrupted by a
   crash or a closed console window is recovered at the next start. Both channels stay in time even if an input
   delivers nothing for a while.
+- Pause and resume a recording (web interface and **P** in the terminal version): the pause is cut out of the
+  recording, both channels stay in sync, and Gemini is told where parts of the meeting are missing.
 - Structured minutes with Google Gemini, with focus templates for sprints, sales calls, interviews and brainstorming;
   the EU AI Act compliant mode (no emotion analysis) is the default.
 - Meeting context after the recording: chat history, notes and screenshots of shared slides.

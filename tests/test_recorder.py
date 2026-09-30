@@ -136,6 +136,77 @@ def test_a_loopback_that_starts_late_is_placed_at_its_time(rec, backend, clock):
     assert rms(audio[: 4 * SR_OUT, 1]) == 0 and rms(audio[4 * SR_OUT :, 1]) > 5000
 
 
+def test_a_pause_is_cut_out_of_the_recording(rec, backend, clock):
+    rec.start()
+    clock.now += 1.0
+    backend.on_mic(tone(1000, seconds=1.0).tobytes())
+    backend.on_system(tone(500, seconds=1.0, channels=2).tobytes())
+    assert rec.pause() and rec.paused
+    clock.now += 30.0  # a coffee break: the inputs keep delivering, but nothing of it is recorded
+    backend.on_mic(np.full((SR_IN, 1), 32000, dtype=np.int16).tobytes())
+    backend.on_system(np.full((SR_IN, 2), 32000, dtype=np.int16).tobytes())
+    assert rec.resume() and not rec.paused
+    clock.now += 1.0
+    backend.on_mic(tone(1000, seconds=1.0).tobytes())
+    backend.on_system(tone(500, seconds=1.0, channels=2).tobytes())
+    rec.stop_capture()
+
+    audio = channels_of(rec.save(compress=False))
+    assert rec.duration == 2.0 and rec.cuts == [1.0]
+    assert len(audio) == 2 * SR_OUT  # the thirty seconds of the pause are not in it
+    assert np.abs(audio).max() < 15000  # neither is what the inputs delivered meanwhile
+    for column in (0, 1):  # no silence was filled in for the pause: both seconds follow each other directly
+        assert rms(audio[:SR_OUT, column]) > 5000 and rms(audio[SR_OUT:, column]) > 5000
+
+
+def test_the_time_and_the_levels_stand_still_while_paused(rec, backend, clock):
+    rec.start()
+    clock.now += 1.0
+    backend.on_mic(tone(1000, seconds=1.0).tobytes())
+    assert rec.mic_level > 0
+
+    rec.pause()
+    clock.now += 10.0
+    backend.on_mic(tone(1000, seconds=1.0).tobytes())
+    assert (rec.get_duration(), rec.mic_level) == (1.0, 0.0)
+
+    rec.resume()
+    clock.now += 0.5
+    assert rec.get_duration() == 1.5
+
+
+def test_the_usual_delay_of_an_input_survives_a_pause(rec, backend, clock):
+    rec.start()
+    clock.now += 1.5  # one second of latency, as in the test above
+    backend.on_mic(tone(1000, seconds=0.5).tobytes())
+    clock.now += 0.5
+    backend.on_mic(tone(1000, seconds=0.5).tobytes())
+    rec.pause()
+    clock.now += 60.0
+    rec.resume()
+    clock.now += 0.5
+    backend.on_mic(tone(1000, seconds=0.5).tobytes())  # still one second behind: no gap to fill
+    rec.stop_capture()
+
+    mic = channels_of(rec.save(compress=False))[:, 0]
+    assert len(mic) == int(2.5 * SR_OUT)
+    assert rms(mic[: int(1.5 * SR_OUT)]) > 5000 and rms(mic[int(1.5 * SR_OUT) :]) == 0
+
+
+def test_a_recording_stopped_while_paused_ends_at_the_pause(rec, backend, clock):
+    assert not rec.pause() and not rec.resume()  # nothing is recording
+    rec.start()
+    assert not rec.resume()  # not paused
+    clock.now += 1.0
+    backend.on_mic(tone(1000, seconds=1.0).tobytes())
+    assert rec.pause() and not rec.pause()
+    clock.now += 30.0
+    rec.stop_capture()
+
+    assert rec.duration == 1.0 and rec.cuts == [] and not rec.paused
+    assert len(channels_of(rec.save(compress=False))) == SR_OUT
+
+
 @pytest.mark.parametrize(
     ("first_delays", "offsets"),
     [

@@ -7,7 +7,8 @@ mono MP3 copy.
 
 Both inputs are kept in time with the clock: an input whose first audio arrives later than the other one's (e.g.
 the loopback of a playback device that plays nothing yet) starts later in the recording, and an input that falls
-behind its usual delay while recording (it delivered nothing meanwhile) is padded with silence.
+behind its usual delay while recording (it delivered nothing meanwhile) is padded with silence. A pause is cut out:
+the inputs keep running, but their audio is dropped and the clock of the recording stands still until it resumes.
 """
 
 import contextlib
@@ -112,6 +113,7 @@ class _Capture:
         self.level = 0.0
         self.first_delay: float | None = None  # seconds the first block was behind the start of the recording
         self.error: OSError | None = None
+        self.paused = False
         self._delay: int | None = None  # frames the input usually lags behind the clock
         self._started = started
         self._clock = clock
@@ -121,7 +123,14 @@ class _Capture:
     def configure(self, device: Device) -> None:
         self.channels, self.rate = device.channels, device.sample_rate
 
+    def pause(self, paused: bool) -> None:
+        """While paused, arriving blocks are dropped."""
+        self.paused = paused
+        self.level = 0.0
+
     def write(self, data: bytes) -> None:
+        if self.paused:
+            return
         pcm = np.frombuffer(data, dtype="<i2")
         count = len(pcm) // self.channels
         if not count:
@@ -208,6 +217,10 @@ class MeetingRecorder:
         self._captures: dict[str, _Capture] = {}
         self._sidecar: dict[str, Any] = {}
         self._started = 0.0
+        # (clock time of the running pause or None, seconds paused before it): replaced as a whole, so that the audio
+        # threads always read a consistent pair
+        self._pause: tuple[float | None, float] = (None, 0.0)
+        self.cuts: list[float] = []  # positions in the recording where a pause was cut out
 
         self.is_recording = False
         self.base_name: str | None = None  # meeting_YYYY-MM-DD_HH-MM-SS of the current or last recording
@@ -235,6 +248,35 @@ class MeetingRecorder:
         capture = self._captures.get(name)
         return capture.level if self.is_recording and capture else 0.0
 
+    def _recording_clock(self) -> float:
+        """The clock without the pauses: it stands still while the recording is paused."""
+        paused_at, paused_before = self._pause
+        return (self._clock() if paused_at is None else paused_at) - paused_before
+
+    @property
+    def paused(self) -> bool:
+        return self.is_recording and self._pause[0] is not None
+
+    def pause(self) -> bool:
+        """Pauses the recording: what happens until resume() is not recorded. False if it is not running."""
+        if not self.is_recording or self._pause[0] is not None:
+            return False
+        for capture in self._captures.values():
+            capture.pause(True)
+        self._pause = (self._clock(), self._pause[1])
+        return True
+
+    def resume(self) -> bool:
+        """Continues a paused recording right where it was paused. False if it is not paused."""
+        paused_at, paused_before = self._pause
+        if not self.is_recording or paused_at is None:
+            return False
+        self._pause = (None, paused_before + self._clock() - paused_at)
+        self.cuts.append(round(self.get_duration(), 3))
+        for capture in self._captures.values():
+            capture.pause(False)
+        return True
+
     def list_devices(self) -> dict[str, list[dict]]:
         """The selectable microphones and system-audio devices; the defaults of the system are flagged."""
         microphones, loopbacks = self.backend.list_devices()
@@ -257,14 +299,15 @@ class MeetingRecorder:
         os.makedirs(self.output_dir, exist_ok=True)  # the folder may have been deleted meanwhile
         start_time = time.time()
         base = datetime.fromtimestamp(start_time).strftime("meeting_%Y-%m-%d_%H-%M-%S")
-        started = self._clock()
+        self._pause, self.cuts = (None, 0.0), []
+        started = self._recording_clock()
         captures: dict[str, _Capture] = {}
         sidecar: dict[str, Any] = {"started_at": start_time}
 
         def connect(mic: Device, system: Device) -> tuple[OnAudio, OnAudio]:
             try:
                 for name, device in zip(INPUTS, (mic, system), strict=True):
-                    captures[name] = _Capture(self._input_path(base, name), started, self._clock)
+                    captures[name] = _Capture(self._input_path(base, name), started, self._recording_clock)
                     captures[name].configure(device)
                 sidecar["inputs"] = {
                     name: {"device": device.name, "channels": device.channels, "rate": device.sample_rate}
@@ -288,14 +331,14 @@ class MeetingRecorder:
         return base
 
     def get_duration(self) -> float:
-        """Returns elapsed recording duration in seconds."""
-        return self._clock() - self._started if self.is_recording else 0.0
+        """Seconds recorded so far, without the pauses."""
+        return self._recording_clock() - self._started if self.is_recording else 0.0
 
     def stop_capture(self) -> bool:
         """Stops both inputs; the audio stays in its raw files until save() is called."""
         if not self.is_recording or not self.base_name:
             return False
-        self.duration = self._clock() - self._started
+        self.duration = self.get_duration()
         self.is_recording = False
         self._release()
         self._sidecar["duration"] = self.duration
