@@ -398,6 +398,17 @@ PROCESSING_TIMEOUT = 600  # seconds Google may take to process an uploaded recor
 PROCESSING_POLL = 2  # seconds between two checks
 
 
+def pauses_line(cuts: list[str] | None) -> str:
+    """The places where the recording was paused: the conversation there is missing, not over."""
+    if not cuts:
+        return ""
+    places = ", ".join(f"[{cut}]" for cut in cuts)
+    return (
+        f"\nPausen: Die Aufnahme wurde bei {places} pausiert; dort fehlt jeweils ein Teil der Besprechung. "
+        "Dauer und Zeitstempel zählen ohne die Pausen."
+    )
+
+
 def build_user_prompt(
     title_text: str,
     meeting_date: str,
@@ -409,6 +420,7 @@ def build_user_prompt(
     voices: list[dict],
     chat_text: str | None,
     image_count: int,
+    cuts: list[str] | None = None,
 ) -> str:
     """The request for one recording: context, focus of the meeting type, channel timeline, voices, chat, slides."""
     specific_focus = MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
@@ -435,7 +447,7 @@ VERBINDLICHE REGELN FÜR DIESE AUFNAHME:
 <kontext>
 Titel: {title_text}
 Datum: {meeting_date}
-Dauer: {duration}
+Dauer: {duration}{pauses_line(cuts)}
 Besprechungstyp: {meeting_type}
 Nutzer (Headset-Mikrofon): {user_label}
 Weitere Teilnehmer: {participants or "keine Angaben"}
@@ -578,6 +590,7 @@ class MeetingAnalyzer:
         chat_text="",
         image_filepaths=None,
         duration=None,
+        cuts=None,
         on_status_update=None,
         ai_act_mode=True,
         voice_recognition=False,
@@ -586,6 +599,7 @@ class MeetingAnalyzer:
         """
         Uploads audio & optional slides/chat to Gemini, requests analysis, and saves markdown report.
         on_status_update(key, **params) receives progress as translation keys of the locale files.
+        cuts are the positions ("HH:MM:SS") where the recording was paused.
         With voice_recognition the voices on the system-audio channel are separated and recognized locally while
         the files are uploaded.
         """
@@ -643,6 +657,7 @@ class MeetingAnalyzer:
                 voices=voices,
                 chat_text=chat_text,
                 image_count=len(uploaded_images),
+                cuts=cuts,
             )
 
             response = self._generate([uploaded_file, *uploaded_images, user_prompt], ai_act_mode, report)

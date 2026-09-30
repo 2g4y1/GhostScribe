@@ -117,6 +117,17 @@ def test_the_minutes_are_saved_with_their_metadata(tmp_path, audio):
     assert steps[-1] == "step.remote_file_deleted"
 
 
+def test_gemini_learns_where_the_recording_was_paused(tmp_path, audio):
+    models = FakeModels(response(), response())
+
+    analyze(tmp_path, audio, models, cuts=["00:12:30", "00:40:02"])
+    analyze(tmp_path, audio, models)
+
+    with_pauses, without = (request["contents"][-1] for request in models.requests)
+    assert "Pausen: Die Aufnahme wurde bei [00:12:30], [00:40:02] pausiert" in with_pauses
+    assert "Pausen:" not in without
+
+
 def test_a_generic_title_is_replaced_by_the_topic_of_the_minutes(tmp_path, audio):
     result, _, steps = analyze(tmp_path, audio, FakeModels(response()), meeting_title="Teams Besprechung")
 

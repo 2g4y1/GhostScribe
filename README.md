@@ -20,6 +20,7 @@ GhostScribe records your microphone and your computer's audio output as two sepa
 
 - **Two-channel recording:** microphone and system audio are stored on separate channels (Windows: WASAPI loopback of the playback device, Linux: its PulseAudio/PipeWire monitor, macOS: a virtual audio device such as BlackHole); a channel timeline tells Gemini when you and when the others were speaking.
 - **Crash-safe:** the audio is written to disk while recording. If the program is closed or the PC crashes during a meeting, the recording is recovered at the next start.
+- **Pause and resume:** breaks and confidential parts stay out of the recording; Gemini is told where parts of the meeting are missing.
 - **Structured minutes:** management summary, decisions, prioritized action items, open questions and a cleaned-up transcript, with focus templates for sprints, sales calls, interviews and brainstorming.
 - **Any spoken language:** the minutes are written in German and the transcript keeps the spoken language. For languages other than German and English, the viewer switches the transcript between the original and a German translation. Meetings over 45 minutes get a condensed course with key quotes instead of a full transcript.
 - **Voice profiles (optional, local):** GhostScribe separates the voices of the other participants on this computer and recognizes them in later meetings. Name a voice once, with the person's consent, and it is named automatically from then on.
@@ -51,7 +52,7 @@ The console window keeps the address and its keys at the bottom:
 - **D** puts a GhostScribe shortcut on the desktop: `GhostScribe.lnk` on Windows, `GhostScribe.command` on macOS (opens in the Terminal; macOS may ask whether the Terminal may access the desktop folder), and a launcher on the desktop and in the applications menu on Linux. The shortcut points to the current location of the GhostScribe folder: after moving the folder, press **D** again.
 - **Ctrl+C** quits.
 
-To run from source instead, clone the repository and start it in the same way. `start.bat --cli` (Windows) or `sh start.sh --cli` (macOS, Linux) starts a terminal version without the web interface.
+To run from source instead, clone the repository and start it in the same way. `start.bat --cli` (Windows) or `sh start.sh --cli` (macOS, Linux) starts a terminal version without the web interface; there, **P** pauses and resumes the recording and **Enter** stops it.
 
 ### macOS: recording the system audio
 
@@ -60,7 +61,7 @@ macOS cannot record what the other participants say by itself. Install the free 
 ## Usage
 
 1. Select your microphone and the **playback device** your meeting app plays through, and optionally enter topic, participants and meeting type.
-2. Click **Start recording**. The recording continues even if you close the browser tab, as long as the GhostScribe console window stays open.
+2. Click **Start recording**. The recording continues even if you close the browser tab, as long as the GhostScribe console window stays open. **Pause** stops recording until you click **Resume**: the time in between is cut out of the recording.
 3. Click **Stop recording**. Optionally add the chat history, notes or screenshots of shared slides (paste with Ctrl+V), correct topic or participants if needed, and click **Analyze**.
 4. Gemini writes the minutes in the background, which takes from under a minute to a few minutes depending on the length of the recording. They open automatically when ready; earlier meetings are under **Saved meetings**.
 

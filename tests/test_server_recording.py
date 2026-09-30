@@ -1,5 +1,6 @@
 """The recording endpoints with fake audio devices: start, stop, discard and recovery after an interruption."""
 
+import json
 import threading
 import time
 
@@ -9,9 +10,10 @@ from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 
 from ghostscribe import app as server
+from ghostscribe.i18n import translate
 from ghostscribe.recorder import MeetingRecorder
 
-from fakes import FakeBackend
+from fakes import Clock, FakeBackend
 
 SECOND = np.zeros(48000, dtype=np.int16).tobytes()
 
@@ -44,6 +46,31 @@ def test_a_recording_keeps_its_input_from_the_start(client, devices, workdir):
 
     assert client.post("/api/record/cancel").status_code == 200
     assert not list(workdir.glob(f"recordings/{base}*"))
+
+
+def test_a_pause_is_cut_out_and_gemini_is_told_where(client, devices, workdir, monkeypatch, capsys):
+    clock = Clock()
+    monkeypatch.setattr(server.recorder, "_clock", clock)
+    assert client.post("/api/record/pause").status_code == 409  # nothing is recording
+
+    client.post("/api/record/start", json={})
+    base = server.recorder.base_name
+    clock.now += 65
+    assert client.post("/api/record/pause").json() == {"success": True, "paused": True}
+    assert client.post("/api/record/pause").json() == {"success": True, "paused": True}  # a second click
+    clock.now += 600
+    status = client.get("/api/status").json()
+    assert (status["status"], status["paused"], status["duration"]) == ("recording", True, 65)
+    assert client.post("/api/record/resume").json() == {"success": True, "paused": False}
+    clock.now += 5
+    assert client.post("/api/record/stop").status_code == 200
+
+    context = json.loads((workdir / f"recordings/{base}.context.json").read_text(encoding="utf-8"))
+    assert (context["duration"], context["cuts"]) == ("00:01:10", ["00:01:05"])
+    printed = capsys.readouterr().out
+    assert printed.count(translate("terminal.recording_paused", duration="00:01:05")) == 1
+    assert translate("terminal.recording_resumed", duration="00:01:05") in printed
+    assert client.post("/api/record/resume").status_code == 409  # the recording is over
 
 
 def test_unknown_devices_and_meeting_types_are_rejected(client, devices):
