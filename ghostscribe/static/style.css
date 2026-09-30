@@ -826,6 +826,26 @@
       transform: translateY(-2px);
     }
 
+    /* Company edition: the consent of all participants before a recording */
+    .recording-consent {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.55rem;
+      margin: -0.4rem auto 1.2rem;
+      max-width: 680px;
+      font-size: 0.85rem;
+      color: var(--text-main);
+      cursor: pointer;
+    }
+
+    .recording-consent input {
+      width: 1.05rem;
+      height: 1.05rem;
+      accent-color: var(--amber);
+      flex-shrink: 0;
+    }
+
     /* Pause: amber like everything that waits; the icon shows what a click does */
     .pause-btn {
       background: rgba(245, 158, 11, 0.1);

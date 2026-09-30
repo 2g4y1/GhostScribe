@@ -19,6 +19,11 @@ The first release.
   delivers nothing for a while.
 - Pause and resume a recording (web interface and **P** in the terminal version): the pause is cut out of the
   recording, both channels stay in sync, and Gemini is told where parts of the meeting are missing.
+- Company edition (`GhostScribe-Company-v<version>.zip`) for organizations: no sentiment mode, the consent of all
+  participants is confirmed before each recording, interviews are documented without assessing the person, the
+  minutes say that they were generated, and the audio is deleted 30 days after the analysis by default.
+- Retention period for the audio of analyzed meetings (setting "Keep recordings", `KEEP_AUDIO_DAYS`); the minutes
+  stay.
 - Structured minutes with Google Gemini, with focus templates for sprints, sales calls, interviews and brainstorming;
   the EU AI Act compliant mode (no emotion analysis) is the default.
 - Meeting context after the recording: chat history, notes and screenshots of shared slides.

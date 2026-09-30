@@ -128,6 +128,22 @@ def test_gemini_learns_where_the_recording_was_paused(tmp_path, audio):
     assert "Pausen:" not in without
 
 
+def test_the_company_edition_analyzes_without_emotions_or_assessing_people(tmp_path, audio, company):
+    models = FakeModels(response())
+
+    result, _, _ = analyze(tmp_path, audio, models, meeting_type="interview", ai_act_mode=False)
+
+    request = models.requests[0]
+    assert "Stimmung & Tonalität" not in request["config"].system_instruction  # asked for, but not available
+    assert "bewerte die befragte Person nicht" in request["contents"][-1]
+    assert "Kandidatenprofil" not in request["contents"][-1]
+    assert result["metadata"]["ai_act_mode"] is True
+    minutes = (tmp_path / "meetings" / "meeting_2026-09-29_15-17-28.md").read_text(encoding="utf-8")
+    assert minutes.startswith(MINUTES.rstrip()) and minutes.endswith(
+        "(configured-model). Vor der Weitergabe prüfen.*\n"
+    )
+
+
 def test_a_generic_title_is_replaced_by_the_topic_of_the_minutes(tmp_path, audio):
     result, _, steps = analyze(tmp_path, audio, FakeModels(response()), meeting_title="Teams Besprechung")
 

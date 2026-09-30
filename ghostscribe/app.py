@@ -14,7 +14,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ghostscribe import __version__
+from ghostscribe import __version__, edition
 from ghostscribe.analyzer import (
     DEFAULT_MODEL,
     MeetingAnalyzer,
@@ -124,6 +124,7 @@ def _recover_interrupted_recordings(bases: list[str]) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    threading.Thread(target=delete_expired_audio, daemon=True).start()
     interrupted = recorder.interrupted_recordings()
     if interrupted:
         with _state_lock:
@@ -220,6 +221,7 @@ class StartRequest(BaseModel):
     meeting_type: MeetingType = "standard"
     user_name: str = Field(default=DEFAULT_USER_NAME, max_length=100)
     ai_act_mode: bool = True
+    consent: bool = False  # all participants were told and agreed (required in the company edition)
     mic_device: str | int | None = None  # None = default device of the system
     loopback_device: str | int | None = None
 
@@ -250,6 +252,7 @@ class SettingsRequest(BaseModel):
     api_key: str = ""
     model: str | None = Field(default=None, max_length=100)
     default_ai_act_mode: bool | None = None
+    keep_audio_days: int | None = Field(default=None, ge=0, le=3650)
     ui_language: str | None = None
     voice_recognition: bool | None = None
     voice_workers: int | None = None
@@ -355,6 +358,55 @@ def _processed_audio_bases() -> set[str]:
     return bases
 
 
+def keep_audio_days() -> int:
+    """Days after the analysis when the audio of a meeting is deleted; 0 keeps it (KEEP_AUDIO_DAYS in .env, by
+    default 30 days in the company edition and unlimited in the private one)."""
+    try:
+        return max(0, int(os.getenv("KEEP_AUDIO_DAYS", "")))
+    except ValueError:
+        return 30 if edition.is_company() else 0
+
+
+def _analysis_time(meta: dict) -> datetime | None:
+    """When the minutes were written: the audio stays long enough to check them, also for a late analysis."""
+    for key in ("created_at", "meeting_start"):
+        try:
+            return datetime.fromisoformat(meta[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
+
+def delete_expired_audio() -> int:
+    """Deletes the audio of meetings analyzed more than keep_audio_days() ago; the minutes stay. Recordings without
+    minutes are never deleted: they still wait for their analysis. Returns the number of meetings."""
+    days = keep_audio_days()
+    if not days:
+        return 0
+    limit = datetime.now() - timedelta(days=days)
+    count = 0
+    for json_path in glob.glob(os.path.join(MEETINGS_DIR, "*.json")):
+        try:
+            meta = _read_json(json_path)
+        except (OSError, ValueError):
+            continue
+        analyzed = _analysis_time(meta)
+        if not meta.get("audio_file") or analyzed is None or analyzed > limit:
+            continue
+        base = os.path.splitext(file_name(meta["audio_file"]))[0]
+        if _delete_files(os.path.join(RECORDINGS_DIR, base + extension) for extension in AUDIO_EXTENSIONS):
+            count += 1
+    if count:
+        print(translate("terminal.audio_expired", count=count, days=days))
+    return count
+
+
+def _check_company_rules(ai_act_mode: bool | None) -> None:
+    """The company edition has no sentiment mode (EU AI Act, Art. 5(1)(f): emotion recognition at the workplace)."""
+    if ai_act_mode is False and edition.is_company():
+        raise api_error(400, "api.sentiment_unavailable")
+
+
 def _recording_heartbeat(started_at: float) -> None:
     """Prints the recording status to the terminal every 5 seconds while this recording runs."""
     while True:
@@ -399,6 +451,8 @@ def get_status():
         "has_api_key": len(os.getenv("GEMINI_API_KEY", "").strip()) > 5,
         "model": os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
         "default_ai_act_mode": default_ai_act_mode(),
+        "edition": edition.edition(),
+        "keep_audio_days": keep_audio_days(),
         "voice_recognition": recognition_enabled(),
         "voice_workers": configured_workers(),
         "voice_workers_max": max_workers(),
@@ -436,6 +490,9 @@ def _device_id(value: str | int | None) -> str | None:
 
 @app.post("/api/record/start")
 def start_recording(req: StartRequest):
+    _check_company_rules(req.ai_act_mode)
+    if edition.is_company() and not req.consent:
+        raise api_error(400, "api.recording_consent_required")
     with _state_lock:
         if _busy():
             raise api_error(409, "api.busy")
@@ -611,6 +668,7 @@ def run_gemini_analysis(audio_path: str, context: dict) -> None:
 
         audio_base = os.path.splitext(os.path.basename(audio_path))[0]
         _delete_files([_context_path(audio_base)])
+        delete_expired_audio()
         with _state_lock:
             app_state["last_meeting_id"] = audio_base
             app_state["status"] = "idle"
@@ -726,6 +784,7 @@ def save_recording_context(filename: str, req: RecordingContextRequest):
 
 @app.post("/api/recordings/{filename}/analyze")
 def analyze_existing_recording(filename: str, background_tasks: BackgroundTasks, req: AnalyzeRequest | None = None):
+    _check_company_rules(req.ai_act_mode if req else None)
     with _state_lock:
         if _busy():
             raise api_error(409, "api.busy")
@@ -806,10 +865,12 @@ def get_meeting(meeting_id: str):
     for voice in metadata["voices"]:
         voice.update(suggestions.get(voice["label"], {}))
     audio_filename = file_name(meta.get("audio_file", ""))
+    has_audio = bool(audio_filename) and os.path.isfile(os.path.join(RECORDINGS_DIR, audio_filename))
+    metadata["audio_deleted"] = bool(audio_filename) and not has_audio  # e.g. after the retention period
     return {
         "metadata": metadata,
         "markdown": markdown,
-        "audio_url": f"/recordings/{audio_filename}" if audio_filename else None,
+        "audio_url": f"/recordings/{audio_filename}" if has_audio else None,
     }
 
 
@@ -925,8 +986,11 @@ def update_settings(req: SettingsRequest):
             raise api_error(400, "api.api_key_rejected")
         key_unchecked = valid is None
         updates["GEMINI_API_KEY"] = new_key
+    _check_company_rules(req.default_ai_act_mode)
     if req.default_ai_act_mode is not None:
         updates["AI_ACT_MODE"] = "true" if req.default_ai_act_mode else "false"
+    if req.keep_audio_days is not None:
+        updates["KEEP_AUDIO_DAYS"] = str(req.keep_audio_days)
     if req.ui_language is not None:
         if req.ui_language not in available_languages():
             raise api_error(400, "api.unknown_language", language=req.ui_language)
@@ -942,5 +1006,7 @@ def update_settings(req: SettingsRequest):
         update_env_file(updates)
     except ValueError as e:
         raise api_error(400, "api.invalid_setting") from e
+    if "KEEP_AUDIO_DAYS" in updates:
+        delete_expired_audio()
 
     return {"success": True, "key_unchecked": key_unchecked}

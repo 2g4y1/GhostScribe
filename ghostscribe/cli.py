@@ -6,7 +6,7 @@ import contextlib
 import os
 import time
 
-from ghostscribe import keys
+from ghostscribe import edition, keys
 from ghostscribe.analyzer import MeetingAnalyzer, default_ai_act_mode
 from ghostscribe.i18n import translate
 from ghostscribe.recorder import MeetingRecorder
@@ -79,6 +79,9 @@ def main():
 
     print("\n" + "-" * 68)
     title = input(translate("cli.ask_title")).strip()
+    if edition.is_company() and input(translate("cli.ask_consent")).strip().lower() not in ("j", "ja", "y", "yes"):
+        print(translate("cli.no_consent"))
+        return
     input("\n" + translate("cli.press_enter_to_start"))
 
     try:
