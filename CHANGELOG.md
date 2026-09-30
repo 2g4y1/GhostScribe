@@ -21,6 +21,9 @@ The first release.
 - Optional local voice recognition with voice profiles that are only saved with the person's consent.
 - Full-text search across all meetings, playback of every recording, renaming of meetings.
 - Web interface and terminal version in English and German; `--version` and `--help` on the command line.
+- Console window with the address and its keys always at the bottom: **R** restarts the server after a question that
+  appears right there with a countdown, **D** puts a shortcut on the desktop (Windows, macOS and Linux, where it also
+  goes into the applications menu).
 - Portable release archive with start scripts for Windows (`start.bat`), macOS (`start.command`) and Linux
   (`start.sh`) that install the dependencies from lock files with pinned checksums.
 

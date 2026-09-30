@@ -45,7 +45,11 @@ GhostScribe records your microphone and your computer's audio output as two sepa
    - **Linux:** run `sh start.sh` in a terminal. On Debian and Ubuntu, the setup needs `sudo apt install python3-venv` first.
 3. The browser opens http://localhost:8765. Enter your Gemini API key under **Settings**, where you can also switch the language.
 
-The console window keeps the address and its keys at the bottom: **R** restarts the server after a confirmation (not during a recording or an analysis), for example after an update; **Ctrl+C** quits.
+The console window keeps the address and its keys at the bottom:
+
+- **R** restarts the server, for example after an update. The question appears at the bottom of the window: confirm with **J** or **Y** within 10 seconds. Not possible during a recording or an analysis.
+- **D** puts a GhostScribe shortcut on the desktop: `GhostScribe.lnk` on Windows, `GhostScribe.command` on macOS (opens in the Terminal; macOS may ask whether the Terminal may access the desktop folder), and a launcher on the desktop and in the applications menu on Linux. The shortcut points to the current location of the GhostScribe folder: after moving the folder, press **D** again.
+- **Ctrl+C** quits.
 
 To run from source instead, clone the repository and start it in the same way. `start.bat --cli` (Windows) or `sh start.sh --cli` (macOS, Linux) starts a terminal version without the web interface.
 
@@ -103,7 +107,7 @@ npm ci && npm run lint
 python scripts/build_release.py
 ```
 
-The application is the `ghostscribe` package (`python -m ghostscribe`): `console.py` runs the server in a child process below the banner of the console window, `app.py` serves the web interface and API, `recorder.py` writes the two-channel recording, `audio.py` captures the inputs on each operating system, `analyzer.py` runs the Gemini analysis, `voices.py` recognizes voices locally, and `static/` contains the web interface. `scripts/build_release.py` creates `dist/GhostScribe-v<version>.zip`, which contains only the files end users need.
+The application is the `ghostscribe` package (`python -m ghostscribe`): `console.py` runs the server in a child process below the banner of the console window, `shortcut.py` creates the desktop shortcut, `app.py` serves the web interface and API, `recorder.py` writes the two-channel recording, `audio.py` captures the inputs on each operating system, `analyzer.py` runs the Gemini analysis, `voices.py` recognizes voices locally, and `static/` contains the web interface. `scripts/build_release.py` creates `dist/GhostScribe-v<version>.zip`, which contains only the files end users need.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the dependency lock files, the checks and the release process, [SECURITY.md](SECURITY.md) for reporting vulnerabilities, and [CHANGELOG.md](CHANGELOG.md) for the changes of each version.
 
