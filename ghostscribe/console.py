@@ -1,29 +1,35 @@
 """
 Console window of the web version: the server runs in a child process, its output scrolls above a banner that
-always stays at the bottom, and R restarts the server (new code and .env) without closing the window.
+always stays at the bottom, R restarts the server (new code and .env) without closing the window, and D puts a
+shortcut to GhostScribe on the desktop.
 """
 
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.request
 import webbrowser
+from collections.abc import Callable
 
 from dotenv import load_dotenv
 
-from ghostscribe import keys
-from ghostscribe.i18n import translate
+from ghostscribe import keys, shortcut
+from ghostscribe.i18n import LocalizedError, translate
 from ghostscribe.utils import APP_URL, BANNER, HOST, PORT
 
 SEPARATOR = "=" * 68
 STOP_TIMEOUT = 15  # seconds the server gets to shut down before it is terminated
 CONFIRM_SECONDS = 10  # time to confirm a restart
 BUSY_MESSAGES = {"recording": "terminal.restart_busy_recording", "processing": "terminal.restart_busy_processing"}
+HIGHLIGHT, RESET = "\x1b[30;43m", "\x1b[0m"  # black on yellow stands out on dark and light backgrounds alike
+_COLOR = re.compile(r"\x1b\[[0-9;]*m")
 
 
 if sys.platform == "win32":
@@ -48,6 +54,19 @@ else:
         return sys.stdout.isatty()
 
 
+def display_width(text: str) -> int:
+    """Columns the text takes in the console: colors take none, emoji and other wide characters two."""
+    width = last = 0
+    for char in _COLOR.sub("", text):
+        if char == "\ufe0f":  # emoji style, as in "⌨️": the character before it takes two columns
+            width += 1 if last == 1 else 0
+            last = 2
+        elif not (unicodedata.combining(char) or char in "\u200b\u200d\ufe0e"):  # these take no column
+            last = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+            width += last
+    return width
+
+
 class Footer:
     """Prints lines above a banner that stays at the bottom of the window (printed once without escape sequences)."""
 
@@ -57,6 +76,11 @@ class Footer:
         self._shown = False
         self._moves = _enable_escape_sequences()
         self._lock = threading.Lock()
+
+    @property
+    def live(self) -> bool:
+        """Whether the banner is redrawn below new lines, so that it can show a question."""
+        return self._moves
 
     def show(self, lines: list[str]) -> None:
         with self._lock:
@@ -72,7 +96,7 @@ class Footer:
 
     def _rows(self) -> int:
         width = max(1, shutil.get_terminal_size().columns)
-        return sum(max(1, -(-len(line) // width)) for line in self.lines)
+        return sum(max(1, -(-display_width(line) // width)) for line in self.lines)
 
     def _clear(self) -> None:
         if self._drawn:
@@ -87,8 +111,12 @@ class Footer:
         sys.stdout.flush()
 
 
-def footer_lines() -> list[str]:
-    hint = translate("terminal.keys") if keys.supported() else translate("terminal.stop_hint")
+def footer_lines(question: str | None = None) -> list[str]:
+    """The banner; a question takes the place of the keys, so that it cannot scroll away with the server output."""
+    if question:
+        hint = f"{HIGHLIGHT} {question} {RESET}"
+    else:
+        hint = translate("terminal.keys") if keys.supported() else translate("terminal.stop_hint")
     return [SEPARATOR, BANNER, translate("terminal.web_ui_footer", url=APP_URL), hint, SEPARATOR]
 
 
@@ -111,16 +139,46 @@ def _open_browser_when_ready(footer: Footer) -> None:
         time.sleep(0.25)
 
 
-def _listen_for_keys(on_restart) -> None:
+def _listen_for_keys(actions: dict[str, Callable[[], None]]) -> None:
     while True:
-        if keys.wait_for_key() == "r":
-            on_restart()
+        action = actions.get(keys.wait_for_key() or "")
+        if action:
+            action()
 
 
 def _confirm(footer: Footer) -> bool:
-    """R is pressed quickly by mistake: the restart needs J (or Y) within CONFIRM_SECONDS."""
-    footer.print(translate("terminal.restart_confirm", seconds=CONFIRM_SECONDS))
-    return keys.wait_for_key(CONFIRM_SECONDS) in ("j", "y")
+    """R is pressed quickly by mistake: the restart needs J (or Y) within CONFIRM_SECONDS. The question stands at the
+    bottom of the window instead of the keys, with a countdown."""
+    if not footer.live:  # the banner cannot be redrawn: the question becomes a normal line
+        footer.print(translate("terminal.restart_confirm", seconds=CONFIRM_SECONDS))
+        return keys.wait_for_key(CONFIRM_SECONDS) in ("j", "y")
+    try:
+        for remaining in range(CONFIRM_SECONDS, 0, -1):
+            footer.show(footer_lines(translate("terminal.restart_confirm", seconds=remaining)))
+            key = keys.wait_for_key(1)
+            if key is not None:
+                return key in ("j", "y")
+        return False
+    finally:
+        footer.show(footer_lines())
+
+
+def _create_shortcut(footer: Footer) -> None:
+    """D: a shortcut on the desktop (on Linux also in the applications menu) that starts GhostScribe."""
+    try:
+        written = shortcut.create()
+    except PermissionError as e:  # macOS asks whether the Terminal may use the desktop folder
+        footer.print(
+            translate("terminal.shortcut_denied_macos")
+            if sys.platform == "darwin"
+            else translate("terminal.shortcut_failed", error=e)
+        )
+        return
+    except (LocalizedError, OSError) as e:
+        footer.print(translate("terminal.shortcut_failed", error=e))
+        return
+    for path in written:
+        footer.print(translate("terminal.shortcut_created", path=path))
 
 
 def _start_server() -> subprocess.Popen:
@@ -181,7 +239,8 @@ def _run() -> int:
             footer.print(translate("terminal.restart_cancelled"))
 
     if keys.supported():
-        threading.Thread(target=_listen_for_keys, args=(request_restart,), daemon=True).start()
+        actions = {"r": request_restart, "d": lambda: _create_shortcut(footer)}
+        threading.Thread(target=_listen_for_keys, args=(actions,), daemon=True).start()
     threading.Thread(target=_open_browser_when_ready, args=(footer,), daemon=True).start()
 
     while True:

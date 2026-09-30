@@ -7,6 +7,7 @@
 *.command text eol=lf
 
 # Binary assets
+*.ico binary
 *.png binary
 *.webp binary
 *.woff2 binary

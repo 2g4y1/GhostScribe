@@ -4,6 +4,7 @@ The web server itself runs in a child process ("--server") that the console wind
 """
 
 import argparse
+import contextlib
 import os
 import sys
 import threading
@@ -42,7 +43,8 @@ def run_server() -> None:
         server.should_exit = True
 
     threading.Thread(target=watch_stdin, daemon=True).start()
-    server.run()
+    with contextlib.suppress(KeyboardInterrupt):  # Ctrl+C: uvicorn has shut down and raises it again, no traceback
+        server.run()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
