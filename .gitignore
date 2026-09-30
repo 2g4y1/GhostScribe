@@ -1,0 +1,41 @@
+# Environment Variables & Secrets (CRITICAL)
+.env
+*.env.local
+
+# Python Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Private Audio Recordings & Meeting Protocols
+recordings/*.wav
+recordings/*.mp3
+recordings/attachments/
+!recordings/.gitkeep
+meetings/*.md
+meetings/*.json
+!meetings/.gitkeep
+
+# Distribution Archives
+*.zip
+
+# OS & Editor generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test Audio & Scratch
+test_meeting.wav
+scratch/
+.ruff_cache/

@@ -1,0 +1,38 @@
+[project]
+name = "ghostscribe"
+version = "1.0.0"
+description = "GhostScribe: Invisible, Bot-Free AI Meeting Recorder & Gemini Minutes Generator"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "pydantic>=2.6.0",
+    "google-genai>=0.1.1",
+    "python-dotenv>=1.0.1",
+    "PyAudioWPatch>=0.2.12.8",
+    "numpy>=1.26.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "PIE",    # flake8-pie
+]
+ignore = [
+    "E501",   # line-too-long (handled by formatter / long prompt strings)
+    "B008",   # do not perform function calls in argument defaults (FastAPI Depends/BackgroundTasks)
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true

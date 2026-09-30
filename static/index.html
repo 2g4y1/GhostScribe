@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GhostScribe | Bot-Free AI Meeting Recorder & Gemini KI-Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="icon" type="image/png" href="/static/logo.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <a href="#" class="brand">
+      <div class="brand-icon">
+        <img src="/static/logo.png" alt="GhostScribe Logo" class="brand-logo-img" />
+      </div>
+      <div class="brand-text">
+        <h1>GhostScribe</h1>
+        <p>Bot-Free AI Meeting Recorder & Protokolle</p>
+      </div>
+    </a>
+
+    <div class="header-actions">
+      <div id="statusBadge" class="status-badge">
+        <span class="dot"></span>
+        <span id="statusText">Bereit</span>
+      </div>
+
+      <button id="settingsBtn" class="btn-secondary">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        Einstellungen
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container">
+
+    <!-- Audio Devices & Live Meters -->
+    <div class="devices-bar">
+      <div class="device-card">
+        <div class="device-header">
+          <div class="device-title">
+            <span>🎙️</span>
+            <span>Mikrofon</span>
+            <div class="user-name-wrapper">
+              <span>(</span>
+              <input 
+                type="text" 
+                id="userSpeakerName" 
+                class="user-speaker-input" 
+                placeholder="Ich" 
+                title="Dein Name im Protokoll" 
+                maxlength="30"
+              />
+              <span>/ Kanal 0)</span>
+            </div>
+          </div>
+          <span id="micName" class="device-name">Wird erkannt...</span>
+        </div>
+        <div class="vu-meter">
+          <div id="micVuFill" class="vu-fill mic"></div>
+        </div>
+      </div>
+
+      <div class="device-card">
+        <div class="device-header">
+          <div class="device-title">
+            <span>🎧</span>
+            <span>Headset (Andere / Kanal 1)</span>
+          </div>
+          <span id="loopbackName" class="device-name">Wird erkannt...</span>
+        </div>
+        <div class="vu-meter">
+          <div id="teamsVuFill" class="vu-fill teams"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recording Console -->
+    <div class="console-card">
+      <div id="timerDisplay" class="timer-display">00:00:00</div>
+      
+      <div class="title-input-wrapper">
+        <input 
+          type="text" 
+          id="meetingTitleInput" 
+          class="title-input" 
+          placeholder="Besprechungsthema (optional)" 
+        />
+        <div class="meta-inputs-grid">
+          <input 
+            type="text" 
+            id="meetingParticipantsInput" 
+            class="sub-input" 
+            placeholder="👥 Weitere Teilnehmer (z. B. Kollege, Martin, Sarah)" 
+          />
+          <select id="meetingTypeSelect" class="sub-input">
+            <option value="standard">📋 Allgemeines Meeting</option>
+            <option value="sprint">⚡ Sprint / Review / Technik</option>
+            <option value="sales">🤝 Kunde / Sales / Angebot</option>
+            <option value="interview">🎯 Bewerbungsgespräch</option>
+            <option value="brainstorming">💡 Brainstorming / Ideen</option>
+          </select>
+        </div>
+
+        <!-- EU AI Act Compliance Toggle (Default: True) -->
+        <div class="ai-act-banner-row">
+          <label class="ai-act-toggle" id="aiActToggleContainer" title="Klicken zum Umschalten: Gemäß EU AI Act (Art. 5 KI-VO) verzichtet dieser Modus auf jegliche Emotions- und Stimmungsanalyse am Arbeitsplatz.">
+            <input type="checkbox" id="aiActModeToggle" checked />
+            <span class="ai-act-switch"></span>
+            <span class="ai-act-info">
+              <span id="aiActModeTitle" class="ai-act-title">🛡️ EU AI Act Modus: Aktiv (Standard)</span>
+              <span id="aiActModeDesc" class="ai-act-desc">Sachlich, neutral &amp; rechtssicher – keine Emotions- oder Stimmungsanalyse am Arbeitsplatz.</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Modern Multimodal Drawer (Chat, Folien, Notizen & Dateien) -->
+      <div class="attachments-accordion" id="attachmentsAccordion">
+        <button type="button" class="attachments-toggle" id="attachmentsToggle" aria-expanded="false" title="Chatverlauf, Notizen und Screenshots / Folien hinzufügen">
+          <div class="toggle-left">
+            <span class="toggle-icon">📎</span>
+            <span class="toggle-title">Multimodaler Kontext: Chat &amp; Folien</span>
+            <span class="toggle-sub">optional</span>
+            <span id="attachmentsCountBadge" class="attachments-badge" style="display: none;">0 Anhänge</span>
+          </div>
+          <div class="toggle-right">
+            <span class="toggle-hint">Strg+V aktiv</span>
+            <span class="toggle-chevron" id="attachmentsChevron">▾</span>
+          </div>
+        </button>
+
+        <div class="attachments-panel" id="attachmentsPanel" style="display: none;">
+          <!-- Segmented Tab Switcher -->
+          <div class="attachments-tabs">
+            <button type="button" class="att-tab-btn active" id="attTabBoth" data-tab="both">
+              <span>👁️ Geteilte Ansicht</span>
+            </button>
+            <button type="button" class="att-tab-btn" id="attTabChat" data-tab="chat">
+              <span>💬 Chat &amp; Notizen</span>
+            </button>
+            <button type="button" class="att-tab-btn" id="attTabImages" data-tab="images">
+              <span>📸 Folien &amp; Screenshots</span>
+              <span id="tabImgCount" class="att-tab-badge" style="display: none;">0</span>
+            </button>
+          </div>
+
+          <div class="attachments-grid" id="attachmentsGrid">
+            <!-- Left: Teams Chat History & Notes -->
+            <div class="attachment-col" id="colChat">
+              <div class="col-header">
+                <span class="col-title">💬 Chatverlauf &amp; Notizen</span>
+                <span class="col-sub">Teams / Zoom / Text</span>
+              </div>
+              <textarea 
+                id="chatInput" 
+                class="chat-textarea" 
+                placeholder="Chatverlauf oder Notizen hier einfügen... (Tipp: Auch TXT-Dateien hierher ziehen oder Strg+V drücken)"
+                rows="4"
+              ></textarea>
+              <div class="chat-actions-bar">
+                <div class="chat-quick-actions">
+                  <button type="button" id="pasteClipboardTextBtn" class="mini-action-btn" title="Zwischenablage einfügen">
+                    <span>📋 Einfügen</span>
+                  </button>
+                  <button type="button" id="importTextFileBtn" class="mini-action-btn" title="Textdatei (.txt, .md, .csv) laden">
+                    <span>📄 TXT-Datei</span>
+                  </button>
+                  <button type="button" id="clearChatBtn" class="text-btn" style="display: none;">Leeren</button>
+                </div>
+                <span id="chatCharCount" class="char-count">0 Zeichen</span>
+              </div>
+            </div>
+
+            <!-- Right: Screenshots & Slides Dropzone -->
+            <div class="attachment-col" id="colImages">
+              <div class="col-header">
+                <span class="col-title">📸 Geteilte Folien &amp; Screenshots</span>
+                <span class="col-sub"><kbd class="kbd-badge">Strg+V</kbd></span>
+              </div>
+
+              <!-- Interactive Dropzone -->
+              <div id="dropZone" class="drop-zone" tabindex="0" title="Screenshots oder Textdateien ablegen, klicken oder Strg+V">
+                <div class="drop-icon">
+                  <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: var(--cyan);">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div class="drop-label">
+                  <strong>Screenshots oder Dateien ablegen</strong>
+                </div>
+                <div class="drop-hint">Hier klicken, Datei ablegen oder <strong>Strg+V</strong> drücken<br><span style="color: var(--text-muted);">PNG, JPG, WEBP, TXT, MD, CSV</span></div>
+                <input type="file" id="fileAttachmentInput" multiple accept="image/png,image/jpeg,image/webp,text/plain,.txt,.md,.log,.csv" style="display: none;" />
+              </div>
+
+              <!-- Thumbnails Container -->
+              <div id="thumbnailsContainer" class="thumbnails-grid" style="display: none;">
+                <!-- Dynamisch befüllt -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="record-actions-row">
+        <div class="record-btn-container">
+          <div id="pulseRing" class="pulse-ring" style="display: none;"></div>
+          <button id="recordToggleBtn" class="record-btn start">
+            <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+            <span id="recordBtnText">Aufnahme starten</span>
+          </button>
+        </div>
+
+        <button id="cancelRecordBtn" class="cancel-btn" style="display: none;" title="Aufnahme verwerfen">
+          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          Verwerfen
+        </button>
+      </div>
+
+      <!-- Processing status banner -->
+      <div id="processingBanner" class="processing-banner" style="display: none;">
+        <div class="spinner"></div>
+        <div>
+          <strong style="color: #ffffff; font-size: 0.9rem;">Gemini KI analysiert die Tonspur...</strong>
+          <p id="processStepText" style="color: #94a3b8; font-size: 0.8rem;">Verarbeite Audio...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content Grid: Sidebar + Viewer -->
+    <div class="content-grid">
+      
+      <!-- Meetings History Sidebar -->
+      <div class="sidebar-card">
+        <div class="sidebar-header">
+          <div class="sidebar-title-group">
+            <span>Gespeicherte Meetings</span>
+            <span id="meetingCount" class="counter-badge">0</span>
+          </div>
+        </div>
+        <div class="search-input-wrapper">
+          <input 
+            type="text" 
+            id="searchInput" 
+            class="search-input" 
+            placeholder="🔍 Suchen (Thema, Teilnehmer, Transkript)..." 
+          />
+          <button id="clearSearchBtn" class="clear-search-btn" style="display: none;" title="Suche leeren (Esc)">✕</button>
+        </div>
+        <div id="meetingsList" class="meetings-list">
+          <!-- Dynamisch befüllt -->
+        </div>
+      </div>
+
+      <!-- Protocol Viewer -->
+      <div class="viewer-card">
+        <div class="viewer-header">
+          <div class="viewer-info">
+            <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+              <h2 id="viewTitle" style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">Kein Meeting ausgewählt</h2>
+              <span id="searchMatchBadge" class="search-match-badge found" style="display: none;">0 Treffer</span>
+            </div>
+            <p id="viewMeta" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">-</p>
+          </div>
+          <div class="viewer-tools">
+            <button id="copyMdBtn" class="btn-secondary btn-primary-action" style="display: none;" title="Protokoll in Zwischenablage kopieren (formatiert für Teams, Outlook & Notizen)">
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+              <span>Kopieren</span>
+            </button>
+            <button id="downloadMdBtn" class="btn-secondary" style="display: none;" title="Protokoll als Markdown-Datei herunterladen">
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span>Download</span>
+            </button>
+            <button id="deleteMeetingBtn" class="btn-secondary btn-danger" style="display: none;" title="Dieses Meeting löschen">
+              <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              <span>Löschen</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Audio Player Section -->
+        <div id="audioPlayerSection" class="audio-player-wrapper" style="display: none;">
+          <div class="audio-player-row">
+            <span style="font-size: 0.85rem; font-weight: 600; white-space: nowrap;">🔊 Tonspur:</span>
+            <audio id="audioElement" controls></audio>
+          </div>
+          <div class="audio-mode-bar">
+            <span class="audio-mode-label">Kanal-Mix:</span>
+            <div class="audio-mode-pills">
+              <button type="button" class="audio-mode-btn active" data-mode="mono" title="Zentriert auf beiden Ohren (angenehm für Kopfhörer)">
+                🔉 Beide Ohren (Mono)
+              </button>
+              <button type="button" class="audio-mode-btn" data-mode="stereo" title="Originale Stereotrennung (Links = Ich, Rechts = Teams)">
+                🎧 Stereo
+              </button>
+              <button type="button" class="audio-mode-btn" data-mode="right" title="Nur Teams / Andere Teilnehmer hören">
+                👥 Nur Teams
+              </button>
+              <button type="button" class="audio-mode-btn" data-mode="left" title="Nur eigenes Mikrofon hören">
+                🎙️ Nur Ich
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rendered Markdown Body -->
+        <div id="markdownBody" class="markdown-body">
+          <div class="empty-state">
+            <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p>Starte eine Aufnahme oder wähle links ein vergangenes Meeting aus,<br>um die Zusammenfassung und das Transkript anzuzeigen.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-overlay">
+    <div class="modal-card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-size: 1.25rem; font-weight: 700;">⚙️ Einstellungen & API-Key</h2>
+        <button id="closeSettingsX" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.3rem; line-height: 1;">✕</button>
+      </div>
+      
+      <div id="welcomeBanner" style="display: none; background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 12px; padding: 1rem; font-size: 0.85rem; line-height: 1.5; color: #cbd5e1;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+          <img src="/static/logo.png" alt="GhostScribe" style="width: 32px; height: 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.4);" />
+          <strong style="color: #fff; font-size: 0.95rem;">👋 Willkommen bei GhostScribe!</strong>
+        </div>
+        Um deine Meetings per KI zu transkribieren und zusammenzufassen, benötigst du einen Google Gemini API-Key.<br>
+        Diesen erhältst du kostenlos in unter 1 Minute bei Google AI Studio.
+      </div>
+
+      <div class="form-group">
+        <div class="form-label-row">
+          <label for="apiKeyInput" style="margin-bottom: 0;">
+            Google Gemini API Key
+            <span id="apiKeyDot" class="status-dot-mini green" title="Gespeichert &amp; Aktiv"></span>
+          </label>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="form-link">
+            Key holen ↗
+          </a>
+        </div>
+        <input 
+          type="password" 
+          id="apiKeyInput" 
+          class="form-input" 
+          placeholder="AIzaSy..." 
+          autocomplete="off"
+        />
+        <span id="apiKeyHint" class="form-hint">
+          🔒 Gespeichert in deiner lokalen .env Datei.
+        </span>
+      </div>
+
+      <div class="form-group">
+        <label for="settingsUserNameInput">Eigener Name im Protokoll</label>
+        <input type="text" id="settingsUserNameInput" class="form-input" placeholder="z. B. Manuel oder Mani" />
+        <span style="font-size: 0.75rem; color: var(--text-sub); line-height: 1.4; display: block; margin-top: 4px;">
+          💡 <strong>Tipp:</strong> Trage deinen echten Vornamen/Rufnamen ein, wie Kollegen dich im Call ansprechen. Wenn hier ein Pseudonym steht, könnte die KI deinen echten Namen für einen anderen Teilnehmer halten.
+        </span>
+      </div>
+
+      <div class="form-group">
+        <label for="modelSelect">Gemini Modell</label>
+        <select id="modelSelect" class="form-input">
+          <option value="gemini-flash-latest" selected>Gemini 3 Flash (Empfohlen – Neueste Generation)</option>
+          <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Höchste Schärfe &amp; Detailtiefe)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (Vorherige Generation)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="defaultAiActSelect">Standard Aufnahmemodus</label>
+        <select id="defaultAiActSelect" class="form-input">
+          <option value="true">🛡️ EU AI Act konform (Sachlich &amp; Neutral – Empfohlen)</option>
+          <option value="false">🎭 Mit Stimmungsanalyse (Erweitert – inkl. Tonalität &amp; Frustration)</option>
+        </select>
+        <span class="form-hint">
+          Rechtssicher gemäß Art. 5 KI-VO (Verbot von Emotionserkennung am Arbeitsplatz).
+        </span>
+      </div>
+
+      <div class="modal-actions">
+        <button id="closeSettingsBtn" class="btn-secondary">Schließen</button>
+        <button id="saveSettingsBtn" class="btn-secondary" style="background: var(--primary); border-color: var(--primary); font-weight: 600;">Speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EU AI Act Warning / Sentiment Confirmation Modal -->
+  <div id="sentimentConfirmModal" class="modal-overlay">
+    <div class="modal-card sentiment-warning-card">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 0.65rem;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
+            ⚠️
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 1.1rem; color: #fff; font-weight: 700;">Rechtlicher Hinweis: Stimmungsanalyse</h3>
+            <span style="font-size: 0.75rem; color: #fca5a5;">EU AI Act – Artikel 5 (KI-Verordnung)</span>
+          </div>
+        </div>
+        <button id="closeSentimentModalX" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.3rem; line-height: 1;">✕</button>
+      </div>
+
+      <div style="font-size: 0.88rem; line-height: 1.6; color: #e2e8f0; display: flex; flex-direction: column; gap: 0.85rem; margin: 0.5rem 0 1rem 0;">
+        <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.28); border-radius: 10px; padding: 0.85rem 1rem; color: #fecaca;">
+          <strong>Achtung:</strong> Die Europäische KI-Verordnung untersagt den Einsatz von KI-Systemen zur <strong>Emotionserkennung am Arbeitsplatz</strong> und in Bildungseinrichtungen grundsätzlich.
+        </div>
+        <p style="margin: 0;">
+          In diesem Modus analysiert Google Gemini persönliche Gefühle, Frustrationsmomente, Zufriedenheit und Tonalität der Beteiligten und hält diese im Protokoll fest.
+        </p>
+        <p style="margin: 0; color: var(--text-sub); font-size: 0.8rem;">
+          Die Aktivierung erfolgt auf eigene Verantwortung. Stelle sicher, dass alle Teilnehmenden der Besprechung ausdrücklich eingewilligt haben.
+        </p>
+      </div>
+
+      <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 0.75rem; flex-wrap: wrap;">
+        <button id="cancelSentimentBtn" class="btn-secondary" style="background: rgba(16, 185, 129, 0.16); border-color: rgba(16, 185, 129, 0.45); color: #a7f3d0; font-weight: 600;">
+          🛡️ Abbrechen (AI Act konform bleiben)
+        </button>
+        <button id="confirmSentimentBtn" class="btn-secondary" style="background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.45); color: #fca5a5; font-weight: 600;">
+          ⚠️ Verstanden &amp; Aktivieren
+        </button>
+      </div>
+    </div>
+  </div>
+
+<!-- Lightbox Modal for Screenshots -->
+  <div id="imageLightboxModal" class="lightbox-overlay" style="display: none;">
+    <div class="lightbox-content">
+      <button id="closeLightboxBtn" class="lightbox-close" title="Schließen (Esc)">✕</button>
+      <img id="lightboxImg" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="Screenshot Vorschau" />
+      <div id="lightboxCaption" class="lightbox-caption"></div>
+    </div>
+  </div>
+
+  <!-- Toast Notification for Strg+V -->
+  <div id="toastNotification" class="toast-notification"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
