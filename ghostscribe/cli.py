@@ -1,18 +1,15 @@
 """
-Interactive CLI for GhostScribe Meeting Recorder
+Interactive terminal version of GhostScribe (python -m ghostscribe --cli).
 """
 
 import msvcrt
 import os
 import time
 
-from dotenv import load_dotenv
-
-from analyzer import MeetingAnalyzer
-from recorder import MeetingRecorder
-from utils import ensure_utf8_console, format_duration, update_env_file
-
-load_dotenv(".env")
+from ghostscribe.analyzer import MeetingAnalyzer
+from ghostscribe.i18n import translate
+from ghostscribe.recorder import MeetingRecorder
+from ghostscribe.utils import BANNER, format_duration, print_banner, update_env_file
 
 
 def level_bar(level, width=15):
@@ -20,36 +17,37 @@ def level_bar(level, width=15):
     return "█" * filled + "░" * (width - filled)
 
 
+def print_step(key, **params):
+    print(f"   → {translate(key, **params)}")
+
+
 def main():
-    print("\n" + "=" * 60)
-    print("🎙️  GHOSTSCRIBE - BOT-FREE AI MEETING RECORDER & ANALYZER (Gemini)")
-    print("=" * 60)
+    print_banner(BANNER)
 
     recorder = MeetingRecorder()
     try:
         mic_info, loopback_info = recorder.find_devices()
-        print(f"✅ Mikrofon (Ich):     {mic_info['name']}")
-        print(f"✅ Teams-Ton (Andere): {loopback_info['name']}")
     except Exception as e:
-        print(f"❌ Fehler bei der Geräte-Erkennung: {e}")
+        print(translate("cli.device_error", error=e))
         return
+    print(translate("cli.microphone", name=mic_info["name"]))
+    print(translate("cli.system_audio", name=loopback_info["name"]))
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("\n⚠️  HINWEIS: Kein GEMINI_API_KEY in .env gefunden.")
-        print("   Du kannst trotzdem aufnehmen, aber für die Analyse wird der Key benötigt.")
-        api_input = input("   Möchtest du deinen API-Key jetzt eingeben? (Enter zum Überspringen): ").strip()
+        print("\n" + translate("cli.no_api_key"))
+        api_input = input("   " + translate("cli.ask_api_key")).strip()
         if api_input:
             api_key = api_input
             update_env_file({"GEMINI_API_KEY": api_key})
-            print("   Key in .env gespeichert!")
+            print("   " + translate("cli.api_key_saved"))
 
-    print("\n" + "-" * 60)
-    title = input("Meeting-Thema / Titel (optional, Enter für Zeitstempel): ").strip()
-    input("\n▶️  Drücke [ENTER], um die AUFNAHME ZU STARTEN...")
+    print("\n" + "-" * 68)
+    title = input(translate("cli.ask_title")).strip()
+    input("\n" + translate("cli.press_enter_to_start"))
 
     recorder.start()
-    print("\n🔴 AUFNAHME LÄUFT! (Drücke [ENTER], um die Aufnahme zu beenden)")
+    print("\n" + translate("cli.recording"))
 
     try:
         while recorder.is_recording:
@@ -67,36 +65,26 @@ def main():
     except KeyboardInterrupt:
         pass
 
-    print("\n\n⏹️  Stoppe Aufnahme und synchronisiere Audio...")
-    wav_path = recorder.stop()
-    print(f"✅ Audio gespeichert unter: {wav_path}")
+    print("\n\n" + translate("cli.stopping"))
+    audio_path = recorder.stop()
+    print(translate("cli.audio_saved", path=audio_path))
 
     if not api_key:
-        print("\n⚠️  Kein API-Key vorhanden. Analyse übersprungen. Die Audiodatei liegt bereit!")
+        print("\n" + translate("cli.skip_analysis"))
         return
 
-    print("\n🤖 Starte KI-Analyse mit Gemini...")
-    analyzer = MeetingAnalyzer(api_key=api_key)
-
+    print("\n" + translate("cli.starting_analysis"))
     try:
-        result = analyzer.analyze_meeting(
-            audio_filepath=wav_path, meeting_title=title, on_status_update=lambda msg: print(f"   -> {msg}")
+        result = MeetingAnalyzer(api_key=api_key).analyze_meeting(
+            audio_filepath=audio_path, meeting_title=title, on_status_update=print_step
         )
-        print("\n" + "=" * 60)
-        print("🎉 FERTIG! Besprechungsprotokoll erstellt:")
-        print(f"📄 Datei: {result['markdown_file']}")
-        print("=" * 60)
-
-        # Öffne die Markdown-Datei im Standard-Editor
-        try:
-            os.startfile(result["markdown_file"])
-        except Exception:
-            pass
-
     except Exception as e:
-        print(f"\n❌ Fehler bei der Gemini-Analyse: {e}")
+        print("\n" + translate("cli.analysis_failed", error=e))
+        return
 
-
-if __name__ == "__main__":
-    ensure_utf8_console()
-    main()
+    print_banner(translate("cli.done", path=result["markdown_file"]))
+    # Open the Markdown file in the default editor
+    try:
+        os.startfile(result["markdown_file"])
+    except Exception:
+        pass

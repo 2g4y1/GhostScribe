@@ -61,6 +61,11 @@
       display: none !important;
     }
 
+    /* The page stays invisible until i18n.js has filled in the texts */
+    html:not(.i18n-ready) body {
+      visibility: hidden;
+    }
+
     * {
       box-sizing: border-box;
       margin: 0;
@@ -233,6 +238,12 @@
       background: rgba(255, 255, 255, 0.1);
       border-color: rgba(255, 255, 255, 0.2);
       transform: translateY(-1px);
+    }
+
+    .btn-primary,
+    .btn-primary:hover {
+      background: var(--primary);
+      border-color: var(--primary);
     }
 
     /* Container */
@@ -529,6 +540,51 @@
       max-width: 520px;
       border-color: rgba(239, 68, 68, 0.45);
       box-shadow: 0 25px 60px rgba(239, 68, 68, 0.25);
+    }
+
+    .sentiment-warning-card .modal-title {
+      font-size: 1.1rem;
+    }
+
+    .warning-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 1.2rem;
+    }
+
+    .warning-subtitle {
+      font-size: 0.75rem;
+      color: #fca5a5;
+    }
+
+    .warning-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      margin: 0.5rem 0 1rem;
+      font-size: 0.88rem;
+      line-height: 1.6;
+      color: #e2e8f0;
+    }
+
+    .warning-box {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.28);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      color: #fecaca;
+    }
+
+    .warning-note {
+      color: var(--text-sub);
+      font-size: 0.8rem;
     }
 
     .ai-act-toggle input {
@@ -1009,6 +1065,14 @@
       line-height: 1.25;
     }
 
+    .drop-icon svg {
+      color: var(--cyan);
+    }
+
+    .drop-formats {
+      color: var(--text-muted);
+    }
+
     .thumbnails-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
@@ -1167,6 +1231,16 @@
       display: flex;
       align-items: center;
       gap: 1rem;
+    }
+
+    .processing-title {
+      color: #fff;
+      font-size: 0.9rem;
+    }
+
+    .processing-step {
+      color: var(--text-muted);
+      font-size: 0.8rem;
     }
 
     .error-banner {
@@ -1395,6 +1469,25 @@
       min-width: 0;
     }
 
+    .viewer-title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+
+    .viewer-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .viewer-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
     .viewer-tools {
       display: flex;
       gap: 0.5rem;
@@ -1468,6 +1561,12 @@
       align-items: center;
       gap: 1rem;
       width: 100%;
+    }
+
+    .audio-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      white-space: nowrap;
     }
 
     audio {
@@ -1662,6 +1761,56 @@
       justify-content: space-between;
       align-items: center;
       gap: 1rem;
+    }
+
+    .modal-title-group {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.3rem;
+      line-height: 1;
+    }
+
+    .welcome-banner {
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      border-radius: 12px;
+      padding: 1rem;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: #cbd5e1;
+    }
+
+    .welcome-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .welcome-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    }
+
+    .welcome-title {
+      color: #fff;
+      font-size: 0.95rem;
     }
 
     .modal-card {

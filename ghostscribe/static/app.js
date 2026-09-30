@@ -1,12 +1,13 @@
 // State
     let currentStatus = "idle";
     let activeMeetingId = null;
+    let activeMeetingMeta = null;
     let rawCurrentMarkdown = "";
     let hasSeenWelcomeModal = false;
     let hasApiKeyConfigured = false;
     let currentConfiguredModel = "gemini-flash-latest";
     const API_KEY_MASK = "••••••••••••••••••••••••";
-    let lastAutoLoadedMeetingId = null; // frisch analysiertes Meeting nur einmal automatisch öffnen
+    let lastAutoLoadedMeetingId = null; // a freshly analyzed meeting is opened automatically only once
     let aiActDefaultApplied = false;
     const DEVICE_STORAGE_KEYS = { mic: "ghostscribe_mic_device", loopback: "ghostscribe_loopback_device" };
     const TRASH_ICON = '<svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>';
@@ -24,8 +25,11 @@
     }
 
     function meetingDate(meta, options) {
-      return new Date(meta.meeting_start || meta.created_at).toLocaleString("de-DE", options);
+      return i18n.date(meta.meeting_start || meta.created_at, options);
     }
+
+    // Error message returned by the server (already translated), or a generic fallback
+    const errorText = (data) => (typeof data?.detail === "string" ? data.detail : t("common.unknown"));
 
     function syncModelSelect(modelName) {
       if (!modelSelect || !modelName) return;
@@ -33,7 +37,7 @@
       if (!opt) {
         opt = document.createElement("option");
         opt.value = modelName;
-        opt.textContent = `${modelName} (Aktuell konfiguriert)`;
+        opt.textContent = t("settings.model_configured", { model: modelName });
         modelSelect.appendChild(opt);
       }
       modelSelect.value = modelName;
@@ -109,7 +113,7 @@
     // Persist and synchronize user name with dynamic auto-resizing
     function adjustUserSpeakerInputWidth() {
       if (!userSpeakerName) return;
-      const text = userSpeakerName.value || userSpeakerName.placeholder || "Ich";
+      const text = userSpeakerName.value || userSpeakerName.placeholder;
       const dynamicWidth = Math.max(54, Math.min(220, text.length * 8.6 + 18));
       userSpeakerName.style.width = dynamicWidth + "px";
     }
@@ -180,14 +184,14 @@
       const isAiAct = aiActModeToggle.checked;
       if (isAiAct) {
         aiActToggleContainer.classList.remove("mode-sentiment");
-        if (aiActModeTitle) aiActModeTitle.textContent = "🛡️ EU AI Act Modus: Aktiv (Standard)";
-        if (aiActModeDesc) aiActModeDesc.innerText = "Sachlich, neutral & rechtssicher – keine Emotions- oder Stimmungsanalyse am Arbeitsplatz.";
-        aiActToggleContainer.title = "Klicken zum Umschalten: Gemäß EU AI Act (Art. 5 KI-VO) verzichtet dieser Modus auf jegliche Emotions- und Stimmungsanalyse am Arbeitsplatz.";
+        aiActModeTitle.textContent = t("aiact.title_on");
+        aiActModeDesc.textContent = t("aiact.desc_on");
+        aiActToggleContainer.title = t("aiact.toggle_title_on");
       } else {
         aiActToggleContainer.classList.add("mode-sentiment");
-        if (aiActModeTitle) aiActModeTitle.textContent = "⚠️ Stimmungsanalyse: Aktiv (EU AI Act deaktiviert)";
-        if (aiActModeDesc) aiActModeDesc.innerText = "Erfasst Emotionen & Frustration. Gemäß Art. 5 KI-VO am Arbeitsplatz unzulässig!";
-        aiActToggleContainer.title = "Klicken zum Reaktivieren des rechtssicheren EU AI Act Modus.";
+        aiActModeTitle.textContent = t("aiact.title_off");
+        aiActModeDesc.textContent = t("aiact.desc_off");
+        aiActToggleContainer.title = t("aiact.toggle_title_off");
       }
     }
 
@@ -261,44 +265,27 @@
     }
 
     // Settings Modal handlers
-    function updateSettingsModalUI() {
-      if (defaultAiActSelect && aiActModeToggle) {
-        defaultAiActSelect.value = aiActModeToggle.checked ? "true" : "false";
-      }
-      syncModelSelect(currentConfiguredModel);
+    function renderApiKeyStatus() {
+      welcomeBanner.style.display = hasApiKeyConfigured ? "none" : "block";
+      apiKeyDot.className = `status-dot-mini ${hasApiKeyConfigured ? "green" : "orange"}`;
+      apiKeyDot.title = t(hasApiKeyConfigured ? "settings.api_key_saved" : "settings.api_key_missing");
+      apiKeyHint.innerHTML = DOMPurify.sanitize(t(hasApiKeyConfigured ? "settings.api_key_hint_saved" : "settings.api_key_hint_new"));
+      apiKeyHint.style.color = hasApiKeyConfigured ? "var(--emerald)" : "var(--text-sub)";
+    }
 
-      if (hasApiKeyConfigured) {
-        if (welcomeBanner) welcomeBanner.style.display = "none";
-        if (apiKeyDot) {
-          apiKeyDot.className = "status-dot-mini green";
-          apiKeyDot.title = "Gespeichert & Aktiv";
-        }
-        apiKeyInput.value = API_KEY_MASK;
-        apiKeyInput.placeholder = "AIzaSy...";
-        if (apiKeyHint) {
-          apiKeyHint.innerHTML = "✅ Gespeichert &amp; Aktiv in deiner lokalen <code>.env</code> Datei.";
-          apiKeyHint.style.color = "var(--emerald)";
-        }
-      } else {
-        if (welcomeBanner) welcomeBanner.style.display = "block";
-        if (apiKeyDot) {
-          apiKeyDot.className = "status-dot-mini orange";
-          apiKeyDot.title = "Kein Key hinterlegt";
-        }
-        apiKeyInput.value = "";
-        apiKeyInput.placeholder = "AIzaSy...";
-        if (apiKeyHint) {
-          apiKeyHint.innerHTML = "🔒 Wird lokal in deiner <code>.env</code> Datei gespeichert und nie weitergegeben.";
-          apiKeyHint.style.color = "var(--text-sub)";
-        }
-      }
+    function updateSettingsModalUI() {
+      defaultAiActSelect.value = aiActModeToggle.checked ? "true" : "false";
+      syncModelSelect(currentConfiguredModel);
+      renderApiKeyStatus();
+      apiKeyInput.value = hasApiKeyConfigured ? API_KEY_MASK : "";
+      apiKeyInput.placeholder = "AIzaSy...";
     }
 
     // Intuitive edit-on-focus for API Key without cluttered extra buttons
     apiKeyInput.addEventListener("focus", () => {
       if (apiKeyInput.value.includes("•")) {
         apiKeyInput.value = "";
-        apiKeyInput.placeholder = "Neuen API-Key einfügen...";
+        apiKeyInput.placeholder = t("settings.api_key_new_placeholder");
       }
     });
 
@@ -335,7 +322,7 @@
       const isMaskedOrEmpty = !key || key.includes("•") || key.includes("*");
 
       if (!hasApiKeyConfigured && isMaskedOrEmpty) {
-        showToast("⚠️ Bitte gib einen gültigen Gemini API-Key ein.");
+        showToast(t("toast.enter_api_key"));
         apiKeyInput.focus();
         return;
       }
@@ -350,7 +337,7 @@
 
       const origText = saveSettingsBtn.innerText;
       saveSettingsBtn.disabled = true;
-      saveSettingsBtn.innerText = "Speichere...";
+      saveSettingsBtn.innerText = t("settings.saving");
 
       try {
         const res = await fetch("/api/settings", {
@@ -370,14 +357,14 @@
             updateAiActToggleUI();
           }
           settingsModal.classList.remove("active");
-          showToast("✅ Einstellungen gespeichert!");
+          showToast(t("toast.settings_saved"));
           pollStatus();
         } else {
           const errData = await res.json().catch(() => ({}));
-          showToast("❌ Fehler: " + (errData.detail || "Konnte nicht speichern"));
+          showToast(t("toast.save_failed", { message: errorText(errData) }));
         }
       } catch (err) {
-        showToast("❌ Netzwerkfehler beim Speichern: " + err);
+        showToast(t("toast.save_failed", { message: err }));
       } finally {
         saveSettingsBtn.disabled = false;
         saveSettingsBtn.innerText = origText;
@@ -444,11 +431,11 @@
         attachmentsCountBadge.style.display = "inline-block";
         attachmentsAccordion.classList.add("has-content");
         if (imgCount > 0 && hasChat) {
-          attachmentsCountBadge.innerText = `${imgCount} Bild${imgCount > 1 ? "er" : ""} + Chat`;
+          attachmentsCountBadge.innerText = t("attachments.badge_with_chat", { images: t("attachments.badge_images", { count: imgCount }) });
         } else if (imgCount > 0) {
-          attachmentsCountBadge.innerText = `${imgCount} Bild${imgCount > 1 ? "er" : ""}`;
+          attachmentsCountBadge.innerText = t("attachments.badge_images", { count: imgCount });
         } else {
-          attachmentsCountBadge.innerText = "Chat aktiv";
+          attachmentsCountBadge.innerText = t("attachments.badge_chat");
         }
       }
     }
@@ -456,7 +443,7 @@
     function updateChatStats() {
       if (!chatInput || !chatCharCount) return;
       const len = chatInput.value.length;
-      chatCharCount.innerText = `${len} Zeichen`;
+      chatCharCount.innerText = t("attachments.char_count", { count: len });
       if (clearChatBtn) {
         clearChatBtn.style.display = len > 0 ? "inline-block" : "none";
       }
@@ -508,17 +495,17 @@
         try {
           const text = await navigator.clipboard.readText();
           if (!text || !text.trim()) {
-            showToast("⚠️ Keine Texte in der Zwischenablage");
+            showToast(t("toast.clipboard_empty"));
             return;
           }
           const prefix = (chatInput && chatInput.value.trim()) ? "\n\n" : "";
           if (chatInput) {
             chatInput.value = chatInput.value + prefix + text.trim();
             updateChatStats();
-            showToast(`📋 ${text.trim().length} Zeichen eingefügt!`);
+            showToast(t("toast.clipboard_pasted", { count: text.trim().length }));
           }
         } catch (err) {
-          showToast("Tipp: Klicke ins Textfeld und drücke Strg+V");
+          showToast(t("toast.clipboard_tip"));
         }
       });
     }
@@ -576,13 +563,13 @@
       }
       attachedImages.forEach((img, idx) => {
         const card = el("div", "thumbnail-card");
-        card.title = `${img.filename} (${img.size}) - Klicken zum Vergrößern`;
+        card.title = t("attachments.thumbnail_title", { name: img.filename, size: img.size });
         const image = el("img", "thumbnail-img");
         image.src = img.data;
         image.alt = img.filename;
         const removeBtn = el("button", "thumbnail-del", "✕");
         removeBtn.type = "button";
-        removeBtn.title = "Entfernen";
+        removeBtn.title = t("attachments.remove");
         removeBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           removeAttachment(img.id);
@@ -680,9 +667,9 @@
             if (textContent && textContent.trim()) {
               const prefix = (chatInput && chatInput.value.trim()) ? "\n\n" : "";
               if (chatInput) {
-                chatInput.value = chatInput.value + prefix + `=== [Datei: ${file.name}] ===\n` + textContent.trim() + "\n";
+                chatInput.value = chatInput.value + prefix + t("attachments.file_marker", { name: file.name }) + "\n" + textContent.trim() + "\n";
                 updateChatStats();
-                showToast(`📄 Textdatei "${file.name}" importiert!`);
+                showToast(t("toast.text_file_imported", { name: file.name }));
               }
             }
           };
@@ -694,7 +681,7 @@
       if (imgCount > 0 || txtCount > 0) {
         openAttachmentsAccordion();
         if (imgCount > 0) {
-          showToast(`📸 ${imgCount} Bild${imgCount > 1 ? "er" : ""} hinzugefügt!`);
+          showToast(t("toast.images_added", { count: imgCount }));
         }
       }
     }
@@ -735,7 +722,7 @@
       if (foundImage) {
         e.preventDefault();
         openAttachmentsAccordion();
-        showToast("📸 Screenshot hinzugefügt (Strg+V)!");
+        showToast(t("toast.screenshot_pasted"));
         return;
       }
 
@@ -748,7 +735,7 @@
           chatInput.value = chatInput.value + prefix + pastedText.trim();
           updateChatStats();
           openAttachmentsAccordion();
-          showToast(`📝 ${pastedText.trim().length} Zeichen Text aus Zwischenablage eingefügt!`);
+          showToast(t("toast.text_pasted", { count: pastedText.trim().length }));
         }
       }
     });
@@ -767,7 +754,7 @@
         const title = meetingTitleInput.value.trim();
         const participants = meetingParticipantsInput.value.trim();
         const meetingType = meetingTypeSelect.value;
-        const userName = (userSpeakerName ? userSpeakerName.value.trim() : "") || "Ich";
+        const userName = userSpeakerName.value.trim() || userSpeakerName.placeholder;
         const isAiAct = aiActModeToggle ? aiActModeToggle.checked : true;
         try {
           const res = await fetch("/api/record/start", {
@@ -784,11 +771,10 @@
             })
           });
           if (!res.ok) {
-            const err = await res.json();
-            alert("Fehler beim Starten: " + (err.detail || "Unbekannt"));
+            alert(t("alert.start_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           }
         } catch (e) {
-          alert("Netzwerkfehler: " + e);
+          alert(t("alert.network_error", { message: e }));
         }
       } else if (currentStatus === "recording") {
         try {
@@ -808,20 +794,19 @@
             })
           });
           if (!res.ok) {
-            const err = await res.json();
-            alert("Fehler beim Stoppen: " + (err.detail || "Unbekannt"));
+            alert(t("alert.stop_failed", { message: errorText(await res.json().catch(() => ({}))) }));
           } else {
             clearAttachments();
           }
         } catch (e) {
-          alert("Netzwerkfehler: " + e);
+          alert(t("alert.network_error", { message: e }));
         }
       }
     });
 
     // Cancel Record
     cancelRecordBtn.addEventListener("click", async () => {
-      if (confirm("Möchtest du die laufende Aufnahme wirklich abbrechen und verwerfen?")) {
+      if (confirm(t("record.confirm_discard"))) {
         try {
           const res = await fetch("/api/record/cancel", { method: "POST" });
           if (res.ok) {
@@ -829,7 +814,7 @@
             pollStatus();
           }
         } catch (e) {
-          alert("Fehler beim Abbrechen: " + e);
+          alert(t("alert.discard_failed", { message: e }));
         }
       }
     });
@@ -853,14 +838,14 @@
           await navigator.clipboard.writeText(rawCurrentMarkdown);
         }
         flashButton(copyMdBtn);
-        showToast("📋 In Zwischenablage kopiert (perfekt formatiert für Teams & Outlook)");
+        showToast(t("toast.copied_rich"));
       } catch (err) {
         try {
           await navigator.clipboard.writeText(rawCurrentMarkdown);
           flashButton(copyMdBtn);
-          showToast("📋 Protokoll als Text kopiert");
+          showToast(t("toast.copied_text"));
         } catch (e) {
-          showToast("❌ Kopieren fehlgeschlagen");
+          showToast(t("toast.copy_failed"));
         }
       }
     });
@@ -880,6 +865,15 @@
       }
     });
 
+    function renderViewerMeta(meta) {
+      const isAiAct = meta.ai_act_mode !== false;
+      const modeBadge = el("span", `badge-tag ${isAiAct ? "ai-act" : "sentiment"}`, t(isAiAct ? "viewer.badge_ai_act" : "viewer.badge_sentiment"));
+      modeBadge.title = t(isAiAct ? "viewer.badge_ai_act_title" : "viewer.badge_sentiment_title");
+      const details = [t("viewer.meeting_on", { date: meetingDate(meta, { dateStyle: "long", timeStyle: "short" }) }), t("viewer.model", { model: meta.model_used })];
+      if (meta.participants) details.push(t("viewer.participants", { names: meta.participants }));
+      viewMeta.replaceChildren(details.join(" • ") + " ", modeBadge);
+    }
+
     // Load meeting details
     async function loadMeeting(id) {
       try {
@@ -889,17 +883,11 @@
         const meta = data.metadata;
 
         activeMeetingId = id;
+        activeMeetingMeta = meta;
         rawCurrentMarkdown = data.markdown;
 
         viewTitle.innerText = meta.title || id;
-        const isAiAct = meta.ai_act_mode !== false;
-        const modeBadge = el("span", `badge-tag ${isAiAct ? "ai-act" : "sentiment"}`, isAiAct ? "🛡️ EU AI Act konform" : "🎭 Mit Stimmungsanalyse");
-        modeBadge.title = isAiAct
-          ? "Rechtssicher gemäß EU AI Act Art. 5: Keine Emotionsanalyse am Arbeitsplatz"
-          : "Erweiterte Analyse inkl. Gruppendynamik und Frustration";
-        const details = [`Meeting vom ${meetingDate(meta)}`, `Modell: ${meta.model_used}`];
-        if (meta.participants) details.push(`Teilnehmer: ${meta.participants}`);
-        viewMeta.replaceChildren(details.join(" • ") + " ", modeBadge);
+        renderViewerMeta(meta);
 
         markdownBody.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown));
         applyViewerSearchHighlight(true);
@@ -917,7 +905,7 @@
 
         renderMeetingsList();
       } catch (err) {
-        console.error("Fehler beim Laden des Meetings:", err);
+        console.error("Loading the meeting failed:", err);
       }
     }
 
@@ -930,7 +918,7 @@
     let gainLR = null;
     let gainRL = null;
     let gainRR = null;
-    let currentAudioMode = "mono"; // Standard: angenehmer Mono-Mix für beide Ohren
+    let currentAudioMode = "mono"; // default: comfortable mono mix on both ears
 
     function initWebAudioRouter() {
       if (audioCtx) return;
@@ -960,7 +948,7 @@
         merger.connect(audioCtx.destination);
         applyAudioMode(currentAudioMode);
       } catch (err) {
-        console.warn("Web Audio Router konnte nicht initialisiert werden:", err);
+        console.warn("Web Audio router could not be initialized:", err);
       }
     }
 
@@ -972,25 +960,25 @@
       }
 
       if (mode === "mono") {
-        // Beide Tonspuren (Ich + Teams) zentriert auf beiden Ohren
+        // Both tracks (me + Teams) centered on both ears
         gainLL.gain.value = 0.8;
         gainLR.gain.value = 0.8;
         gainRL.gain.value = 0.8;
         gainRR.gain.value = 0.8;
       } else if (mode === "stereo") {
-        // Original: Links = Ich, Rechts = Teams
+        // Original: left = me, right = Teams
         gainLL.gain.value = 1.0;
         gainLR.gain.value = 0.0;
         gainRL.gain.value = 0.0;
         gainRR.gain.value = 1.0;
       } else if (mode === "right") {
-        // Nur Teams / Andere auf beiden Ohren
+        // Only Teams / other participants on both ears
         gainLL.gain.value = 0.0;
         gainLR.gain.value = 0.0;
         gainRL.gain.value = 1.0;
         gainRR.gain.value = 1.0;
       } else if (mode === "left") {
-        // Nur eigenes Mikrofon auf beiden Ohren
+        // Only my own microphone on both ears
         gainLL.gain.value = 1.0;
         gainLR.gain.value = 1.0;
         gainRL.gain.value = 0.0;
@@ -1025,7 +1013,7 @@
 
     async function deleteMeetingPrompt(id, title) {
       const displayTitle = title || id;
-      if (!confirm(`Möchtest du das Meeting "${displayTitle}" samt Audiodateien (MP3 + WAV) und Screenshots endgültig löschen?`)) {
+      if (!confirm(t("confirm.delete_meeting", { name: displayTitle }))) {
         return;
       }
       try {
@@ -1036,28 +1024,29 @@
           }
           await fetchMeetings();
         } else {
-          const err = await res.json();
-          alert("Fehler beim Löschen: " + (err.detail || "Unbekannt"));
+          alert(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
         }
       } catch (err) {
-        alert("Netzwerkfehler beim Löschen: " + err);
+        alert(t("alert.network_error", { message: err }));
       }
     }
 
     function resetViewer() {
       activeMeetingId = null;
+      activeMeetingMeta = null;
       rawCurrentMarkdown = "";
       if (searchMatchBadge) searchMatchBadge.style.display = "none";
-      viewTitle.innerText = "Kein Meeting ausgewählt";
+      viewTitle.innerText = t("viewer.no_selection");
       viewMeta.innerText = "-";
       markdownBody.innerHTML = `
         <div class="empty-state">
           <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
-          <p>Starte eine Aufnahme oder wähle links ein vergangenes Meeting aus,<br>um die Zusammenfassung und das Transkript anzuzeigen.</p>
+          <p data-i18n-html="viewer.empty"></p>
         </div>
       `;
+      i18n.apply(markdownBody);
       copyMdBtn.style.display = "none";
       downloadMdBtn.style.display = "none";
       deleteMeetingBtn.style.display = "none";
@@ -1075,7 +1064,7 @@
           renderMeetingsList();
         }
       } catch (e) {
-        console.error("Fehler bei Meetings:", e);
+        console.error("Loading the meetings failed:", e);
       }
       fetchUnprocessed();
     }
@@ -1097,7 +1086,7 @@
         const res = await fetch("/api/unprocessed-recordings");
         if (res.ok) renderUnprocessed(await res.json());
       } catch (err) {
-        console.error("Fehler bei unverarbeiteten Aufnahmen:", err);
+        console.error("Loading the unprocessed recordings failed:", err);
       }
     }
 
@@ -1105,13 +1094,14 @@
       unprocessedList.replaceChildren(...recordings.map(rec => {
         const item = el("div", "unprocessed-item");
         const info = el("div", "unprocessed-info");
-        const sizeMb = (rec.size_kb / 1024).toLocaleString("de-DE", { maximumFractionDigits: 1 });
-        info.append(el("div", "unprocessed-name", rec.title || rec.filename), el("div", "meeting-item-date", `${rec.time} • ${sizeMb} MB`));
+        const size = t("sidebar.size_mb", { size: i18n.number(rec.size_kb / 1024, { maximumFractionDigits: 1 }) });
+        const recordedAt = i18n.date(rec.recorded_at, { dateStyle: "short", timeStyle: "short" });
+        info.append(el("div", "unprocessed-name", rec.title || rec.filename), el("div", "meeting-item-date", `${recordedAt} • ${size}`));
         info.title = rec.filename;
-        const analyzeBtn = el("button", "mini-action-btn", "Analysieren");
+        const analyzeBtn = el("button", "mini-action-btn", t("sidebar.analyze"));
         analyzeBtn.addEventListener("click", () => analyzeRecording(rec.filename));
         const deleteBtn = el("button", "mini-action-btn danger", "✕");
-        deleteBtn.title = "Aufnahme löschen";
+        deleteBtn.title = t("sidebar.delete_recording");
         deleteBtn.addEventListener("click", () => deleteRecording(rec.filename));
         item.append(info, analyzeBtn, deleteBtn);
         return item;
@@ -1131,28 +1121,26 @@
           body: JSON.stringify({ ai_act_mode: aiActModeToggle.checked, user_name: userSpeakerName.value.trim() })
         });
         if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          alert("Analyse konnte nicht gestartet werden: " + (err.detail || "Unbekannt"));
+          alert(t("alert.analyze_failed", { message: errorText(await res.json().catch(() => ({}))) }));
         }
         pollStatus();
       } catch (err) {
-        alert("Netzwerkfehler: " + err);
+        alert(t("alert.network_error", { message: err }));
       }
     }
 
     async function deleteRecording(filename) {
-      if (!confirm(`Möchtest du die Aufnahme "${filename}" samt Audiodateien und Screenshots endgültig löschen?`)) {
+      if (!confirm(t("confirm.delete_recording", { name: filename }))) {
         return;
       }
       try {
         const res = await fetch(`/api/recordings/${encodeURIComponent(filename)}`, { method: "DELETE" });
         if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          alert("Fehler beim Löschen: " + (err.detail || "Unbekannt"));
+          alert(t("alert.delete_failed", { message: errorText(await res.json().catch(() => ({}))) }));
         }
         fetchUnprocessed();
       } catch (err) {
-        alert("Netzwerkfehler beim Löschen: " + err);
+        alert(t("alert.network_error", { message: err }));
       }
     }
 
@@ -1162,7 +1150,7 @@
     function fillDeviceSelect(select, devices, storageKey) {
       const saved = localStorage.getItem(storageKey) || "";
       const defaultDevice = devices.find(d => d.default);
-      select.replaceChildren(new Option(defaultDevice ? `${deviceLabel(defaultDevice.name)} (Standard)` : "Windows-Standard", ""));
+      select.replaceChildren(new Option(defaultDevice ? t("devices.default", { name: deviceLabel(defaultDevice.name) }) : t("devices.windows_default"), ""));
       devices.filter(d => !d.default).forEach(d => select.add(new Option(deviceLabel(d.name), String(d.index))));
       select.value = devices.some(d => !d.default && String(d.index) === saved) ? saved : "";
     }
@@ -1176,7 +1164,7 @@
         fillDeviceSelect(micSelect, data.microphones, DEVICE_STORAGE_KEYS.mic);
         fillDeviceSelect(loopbackSelect, data.loopbacks, DEVICE_STORAGE_KEYS.loopback);
       } catch (err) {
-        console.error("Geräteliste konnte nicht geladen werden:", err);
+        console.error("Loading the audio devices failed:", err);
       }
     }
 
@@ -1286,11 +1274,11 @@
 
       if (searchMatchBadge) {
         if (count > 0) {
-          searchMatchBadge.textContent = `🔍 ${count} Treffer im Protokoll`;
+          searchMatchBadge.textContent = t("viewer.search_matches", { count });
           searchMatchBadge.className = "search-match-badge found";
           searchMatchBadge.style.display = "inline-flex";
         } else {
-          searchMatchBadge.textContent = "Kein Treffer im aktuellen Protokoll";
+          searchMatchBadge.textContent = t("viewer.no_search_match");
           searchMatchBadge.className = "search-match-badge none";
           searchMatchBadge.style.display = "inline-flex";
         }
@@ -1338,7 +1326,7 @@
       const filtered = cachedMeetings.filter(m => !query || matches(m, ["title", "participants", "meeting_start", "created_at", "content"]));
 
       if (filtered.length === 0) {
-        meetingsList.replaceChildren(el("p", "meetings-empty", cachedMeetings.length === 0 ? "Noch keine Aufnahmen vorhanden." : "Keine Treffer für deine Suche."));
+        meetingsList.replaceChildren(el("p", "meetings-empty", t(cachedMeetings.length === 0 ? "sidebar.no_meetings" : "sidebar.no_results")));
         return;
       }
 
@@ -1350,10 +1338,10 @@
         const date = meetingDate(m, { dateStyle: "short", timeStyle: "short" });
         body.append(title, el("div", "meeting-item-date", date + (m.participants ? " • " + m.participants : "")));
         if (query && !matches(m, ["title", "participants"]) && matches(m, ["content"])) {
-          body.append(el("div", "meeting-item-hint", "💬 Treffer im Transkript / Protokoll"));
+          body.append(el("div", "meeting-item-hint", t("sidebar.content_match")));
         }
         const deleteBtn = el("button", "delete-item-btn");
-        deleteBtn.title = "Dieses Meeting löschen";
+        deleteBtn.title = t("sidebar.delete_meeting");
         deleteBtn.innerHTML = TRASH_ICON;
         deleteBtn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1381,12 +1369,12 @@
             loadDevices();
           }
           if (previousStatus !== currentStatus && !isBusy()) {
-            fetchMeetings(); // Aufnahme/Analyse beendet: Listen aktualisieren
+            fetchMeetings(); // recording/analysis finished: refresh the lists
           }
           unprocessedSection.hidden = isBusy() || unprocessedList.childElementCount === 0;
           errorBanner.hidden = data.status !== "error";
           if (data.status === "error") {
-            errorBanner.textContent = `⚠️ ${data.last_error || "Unbekannter Fehler"}`;
+            errorBanner.textContent = `⚠️ ${data.last_error || t("error.unknown")}`;
           }
           if (!aiActDefaultApplied) {
             aiActDefaultApplied = true;
@@ -1412,10 +1400,10 @@
           // Status & UI states
           if (data.status === "recording") {
             statusBadge.className = "status-badge recording";
-            statusText.innerText = "Aufnahme läuft";
+            statusText.innerText = t("status.recording");
             timerDisplay.innerText = formatTime(data.duration);
             recordToggleBtn.className = "record-btn stop";
-            recordBtnText.innerText = "Aufnahme beenden & Analysieren";
+            recordBtnText.innerText = t("record.stop");
             cancelRecordBtn.style.display = "flex";
             pulseRing.style.display = "block";
             processingBanner.style.display = "none";
@@ -1433,24 +1421,24 @@
             }
           } else if (data.status === "processing") {
             statusBadge.className = "status-badge processing";
-            statusText.innerText = "Gemini analysiert...";
+            statusText.innerText = t("status.processing");
             recordToggleBtn.className = "record-btn";
             recordToggleBtn.disabled = true;
-            recordBtnText.innerText = "KI-Analyse läuft...";
+            recordBtnText.innerText = t("record.analyzing");
             cancelRecordBtn.style.display = "none";
             pulseRing.style.display = "none";
             processingBanner.style.display = "flex";
-            processStepText.innerText = data.process_step || "Verarbeite...";
+            processStepText.innerText = data.process_step || t("processing.default_step");
             meetingTitleInput.disabled = true;
             meetingParticipantsInput.disabled = true;
             meetingTypeSelect.disabled = true;
           } else {
             const hasError = data.status === "error";
             statusBadge.className = hasError || !data.has_api_key ? "status-badge warning" : "status-badge";
-            statusText.innerText = hasError ? "Fehler" : data.has_api_key ? "Bereit" : "API-Key fehlt";
+            statusText.innerText = t(hasError ? "status.error" : data.has_api_key ? "status.ready" : "status.no_api_key");
             recordToggleBtn.disabled = false;
             recordToggleBtn.className = "record-btn start";
-            recordBtnText.innerText = "Aufnahme starten";
+            recordBtnText.innerText = t("record.start");
             cancelRecordBtn.style.display = "none";
             pulseRing.style.display = "none";
             processingBanner.style.display = "none";
@@ -1461,7 +1449,7 @@
               timerDisplay.innerText = "00:00:00";
             }
 
-            // Frisch analysiertes Meeting einmal öffnen (danach bleibt die Auswahl beim Nutzer)
+            // Open a freshly analyzed meeting once (afterwards the user's selection is kept)
             if (data.last_meeting_id && data.last_meeting_id !== lastAutoLoadedMeetingId) {
               lastAutoLoadedMeetingId = data.last_meeting_id;
               loadMeeting(data.last_meeting_id);
@@ -1480,12 +1468,59 @@
       }
     }
 
-    // Warnung vor versehentlichem Tab-Schließen bei laufender Aufnahme
+    // Warn before the tab is closed while recording
     window.addEventListener("beforeunload", (e) => {
       if (currentStatus === "recording") {
         e.preventDefault();
-        e.returnValue = "Eine Aufnahme läuft aktuell im Hintergrund weiter. Du kannst dieses Fenster jederzeit wieder aufrufen.";
+        e.returnValue = t("record.leave_warning");
       }
+    });
+
+    // Language: the saved choice, otherwise the first supported browser language
+    const languageSelect = document.getElementById("languageSelect");
+
+    function saveLanguage(language) {
+      return fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ui_language: language })
+      });
+    }
+
+    async function initLanguage() {
+      const { current, available } = await (await fetch("/api/languages")).json();
+      languageSelect.replaceChildren(...Object.entries(available).map(([code, name]) => new Option(name, code)));
+      let language = current;
+      if (!language) {
+        language = navigator.languages.map(l => l.slice(0, 2).toLowerCase()).find(l => l in available) || "en";
+        saveLanguage(language);
+      }
+      languageSelect.value = language;
+      await i18n.load(language);
+    }
+
+    // Content the script renders itself instead of using data-i18n attributes (again after a language change)
+    function renderTranslatedContent() {
+      adjustUserSpeakerInputWidth();
+      updateAiActToggleUI();
+      updateChatStats();
+      renderThumbnails();
+      renderApiKeyStatus();
+      fetchMeetings();
+      loadDevices();
+      if (activeMeetingMeta) {
+        renderViewerMeta(activeMeetingMeta);
+        applyViewerSearchHighlight(false);
+      } else {
+        resetViewer();
+      }
+    }
+
+    languageSelect.addEventListener("change", async () => {
+      await saveLanguage(languageSelect.value);
+      await i18n.load(languageSelect.value);
+      renderTranslatedContent();
+      pollStatus();
     });
 
     // Initialize
@@ -1493,8 +1528,11 @@
       await pollStatus();
       setTimeout(pollLoop, 300);
     }
-    window.addEventListener("focus", loadDevices); // z. B. Headset angesteckt, während das Fenster im Hintergrund war
-    pollLoop();
-    loadDevices();
-    fetchMeetings();
-    applyUrlParams();
+
+    (async () => {
+      await initLanguage();
+      renderTranslatedContent();
+      window.addEventListener("focus", loadDevices); // e.g. a headset was plugged in while the window was in the background
+      pollLoop();
+      applyUrlParams();
+    })();

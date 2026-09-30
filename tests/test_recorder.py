@@ -2,7 +2,7 @@ import wave
 
 import numpy as np
 
-from recorder import MeetingRecorder, resample_to_mono
+from ghostscribe.recorder import MeetingRecorder, resample_to_mono
 
 SR_IN, SR_OUT = 48000, 16000
 AMPLITUDE = 10000

@@ -1,6 +1,6 @@
 import pytest
 
-from utils import format_duration, update_env_file
+from ghostscribe.utils import format_duration, update_env_file
 
 
 def test_format_duration():

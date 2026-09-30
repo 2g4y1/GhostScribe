@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GhostScribe | Bot-Free AI Meeting Recorder & Gemini KI-Analyzer</title>
+  <title>GhostScribe</title>
   <script src="/static/vendor/marked.umd.js" defer></script>
   <script src="/static/vendor/purify.min.js" defer></script>
+  <script src="/static/i18n.js" defer></script>
   <link rel="icon" type="image/png" href="/static/logo.png">
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -15,18 +16,18 @@
   <header>
     <a href="#" class="brand">
       <div class="brand-icon">
-        <img src="/static/logo.png" alt="GhostScribe Logo" class="brand-logo-img" />
+        <img src="/static/logo.png" class="brand-logo-img" data-i18n-alt="header.logo_alt" />
       </div>
       <div class="brand-text">
         <h1>GhostScribe</h1>
-        <p>Bot-Free AI Meeting Recorder & Protokolle</p>
+        <p data-i18n="header.subtitle"></p>
       </div>
     </a>
 
     <div class="header-actions">
       <div id="statusBadge" class="status-badge">
         <span class="dot"></span>
-        <span id="statusText">Bereit</span>
+        <span id="statusText"></span>
       </div>
 
       <button id="settingsBtn" class="btn-secondary">
@@ -34,7 +35,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
-        Einstellungen
+        <span data-i18n="header.settings"></span>
       </button>
     </div>
   </header>
@@ -48,21 +49,21 @@
         <div class="device-header">
           <div class="device-title">
             <span>🎙️</span>
-            <span>Mikrofon</span>
+            <span data-i18n="devices.mic"></span>
             <div class="user-name-wrapper">
               <span>(</span>
-              <input 
-                type="text" 
-                id="userSpeakerName" 
-                class="user-speaker-input" 
-                placeholder="Ich" 
-                title="Dein Name im Protokoll" 
+              <input
+                type="text"
+                id="userSpeakerName"
+                class="user-speaker-input"
                 maxlength="30"
+                data-i18n-placeholder="devices.user_name_placeholder"
+                data-i18n-title="devices.user_name_title"
               />
-              <span>/ Kanal 0)</span>
+              <span data-i18n="devices.mic_channel"></span>
             </div>
           </div>
-          <select id="micSelect" class="device-select" title="Mikrofon auswählen" aria-label="Mikrofon"></select>
+          <select id="micSelect" class="device-select" data-i18n-title="devices.mic_select_title" data-i18n-aria-label="devices.mic"></select>
         </div>
         <div class="vu-meter">
           <div id="micVuFill" class="vu-fill mic"></div>
@@ -73,9 +74,9 @@
         <div class="device-header">
           <div class="device-title">
             <span>🎧</span>
-            <span>Headset (Andere / Kanal 1)</span>
+            <span data-i18n="devices.loopback"></span>
           </div>
-          <select id="loopbackSelect" class="device-select" title="Wiedergabegerät, dessen Ton aufgenommen wird (z. B. das Headset für Teams)" aria-label="Systemton-Gerät"></select>
+          <select id="loopbackSelect" class="device-select" data-i18n-title="devices.loopback_select_title" data-i18n-aria-label="devices.loopback_aria"></select>
         </div>
         <div class="vu-meter">
           <div id="teamsVuFill" class="vu-fill teams"></div>
@@ -86,54 +87,44 @@
     <!-- Recording Console -->
     <div class="console-card">
       <div id="timerDisplay" class="timer-display">00:00:00</div>
-      
+
       <div class="title-input-wrapper">
-        <input 
-          type="text" 
-          id="meetingTitleInput" 
-          class="title-input" 
-          placeholder="Besprechungsthema (optional)" 
-        />
+        <input type="text" id="meetingTitleInput" class="title-input" data-i18n-placeholder="console.title_placeholder" />
         <div class="meta-inputs-grid">
-          <input 
-            type="text" 
-            id="meetingParticipantsInput" 
-            class="sub-input" 
-            placeholder="👥 Weitere Teilnehmer (z. B. Kollege, Martin, Sarah)" 
-          />
+          <input type="text" id="meetingParticipantsInput" class="sub-input" data-i18n-placeholder="console.participants_placeholder" />
           <select id="meetingTypeSelect" class="sub-input">
-            <option value="standard">📋 Allgemeines Meeting</option>
-            <option value="sprint">⚡ Sprint / Review / Technik</option>
-            <option value="sales">🤝 Kunde / Sales / Angebot</option>
-            <option value="interview">🎯 Bewerbungsgespräch</option>
-            <option value="brainstorming">💡 Brainstorming / Ideen</option>
+            <option value="standard" data-i18n="type.standard"></option>
+            <option value="sprint" data-i18n="type.sprint"></option>
+            <option value="sales" data-i18n="type.sales"></option>
+            <option value="interview" data-i18n="type.interview"></option>
+            <option value="brainstorming" data-i18n="type.brainstorming"></option>
           </select>
         </div>
 
         <!-- EU AI Act Compliance Toggle (Default: True) -->
         <div class="ai-act-banner-row">
-          <label class="ai-act-toggle" id="aiActToggleContainer" title="Klicken zum Umschalten: Gemäß EU AI Act (Art. 5 KI-VO) verzichtet dieser Modus auf jegliche Emotions- und Stimmungsanalyse am Arbeitsplatz.">
+          <label class="ai-act-toggle" id="aiActToggleContainer">
             <input type="checkbox" id="aiActModeToggle" checked />
             <span class="ai-act-switch"></span>
             <span class="ai-act-info">
-              <span id="aiActModeTitle" class="ai-act-title">🛡️ EU AI Act Modus: Aktiv (Standard)</span>
-              <span id="aiActModeDesc" class="ai-act-desc">Sachlich, neutral &amp; rechtssicher – keine Emotions- oder Stimmungsanalyse am Arbeitsplatz.</span>
+              <span id="aiActModeTitle" class="ai-act-title"></span>
+              <span id="aiActModeDesc" class="ai-act-desc"></span>
             </span>
           </label>
         </div>
       </div>
 
-      <!-- Modern Multimodal Drawer (Chat, Folien, Notizen & Dateien) -->
+      <!-- Meeting context: chat, notes, slides and files -->
       <div class="attachments-accordion" id="attachmentsAccordion">
-        <button type="button" class="attachments-toggle" id="attachmentsToggle" aria-expanded="false" title="Chatverlauf, Notizen und Screenshots / Folien hinzufügen">
+        <button type="button" class="attachments-toggle" id="attachmentsToggle" aria-expanded="false" data-i18n-title="attachments.toggle_title">
           <div class="toggle-left">
             <span class="toggle-icon">📎</span>
-            <span class="toggle-title">Multimodaler Kontext: Chat &amp; Folien</span>
-            <span class="toggle-sub">optional</span>
-            <span id="attachmentsCountBadge" class="attachments-badge" style="display: none;">0 Anhänge</span>
+            <span class="toggle-title" data-i18n="attachments.title"></span>
+            <span class="toggle-sub" data-i18n="attachments.optional"></span>
+            <span id="attachmentsCountBadge" class="attachments-badge" style="display: none;"></span>
           </div>
           <div class="toggle-right">
-            <span class="toggle-hint">Strg+V aktiv</span>
+            <span class="toggle-hint" data-i18n="attachments.paste_active"></span>
             <span class="toggle-chevron" id="attachmentsChevron">▾</span>
           </div>
         </button>
@@ -142,69 +133,63 @@
           <!-- Segmented Tab Switcher -->
           <div class="attachments-tabs">
             <button type="button" class="att-tab-btn active" id="attTabBoth" data-tab="both">
-              <span>👁️ Geteilte Ansicht</span>
+              <span data-i18n="attachments.tab_both"></span>
             </button>
             <button type="button" class="att-tab-btn" id="attTabChat" data-tab="chat">
-              <span>💬 Chat &amp; Notizen</span>
+              <span data-i18n="attachments.tab_chat"></span>
             </button>
             <button type="button" class="att-tab-btn" id="attTabImages" data-tab="images">
-              <span>📸 Folien &amp; Screenshots</span>
+              <span data-i18n="attachments.tab_images"></span>
               <span id="tabImgCount" class="att-tab-badge" style="display: none;">0</span>
             </button>
           </div>
 
           <div class="attachments-grid" id="attachmentsGrid">
-            <!-- Left: Teams Chat History & Notes -->
+            <!-- Left: chat history & notes -->
             <div class="attachment-col" id="colChat">
               <div class="col-header">
-                <span class="col-title">💬 Chatverlauf &amp; Notizen</span>
-                <span class="col-sub">Teams / Zoom / Text</span>
+                <span class="col-title" data-i18n="attachments.chat_title"></span>
+                <span class="col-sub" data-i18n="attachments.chat_sources"></span>
               </div>
-              <textarea 
-                id="chatInput" 
-                class="chat-textarea" 
-                placeholder="Chatverlauf oder Notizen hier einfügen... (Tipp: Auch TXT-Dateien hierher ziehen oder Strg+V drücken)"
-                rows="4"
-              ></textarea>
+              <textarea id="chatInput" class="chat-textarea" rows="4" data-i18n-placeholder="attachments.chat_placeholder"></textarea>
               <div class="chat-actions-bar">
                 <div class="chat-quick-actions">
-                  <button type="button" id="pasteClipboardTextBtn" class="mini-action-btn" title="Zwischenablage einfügen">
-                    <span>📋 Einfügen</span>
+                  <button type="button" id="pasteClipboardTextBtn" class="mini-action-btn" data-i18n-title="attachments.paste_title">
+                    <span data-i18n="attachments.paste"></span>
                   </button>
-                  <button type="button" id="importTextFileBtn" class="mini-action-btn" title="Textdatei (.txt, .md, .csv) laden">
-                    <span>📄 TXT-Datei</span>
+                  <button type="button" id="importTextFileBtn" class="mini-action-btn" data-i18n-title="attachments.import_title">
+                    <span data-i18n="attachments.import"></span>
                   </button>
-                  <button type="button" id="clearChatBtn" class="text-btn" style="display: none;">Leeren</button>
+                  <button type="button" id="clearChatBtn" class="text-btn" style="display: none;" data-i18n="attachments.clear"></button>
                 </div>
-                <span id="chatCharCount" class="char-count">0 Zeichen</span>
+                <span id="chatCharCount" class="char-count"></span>
               </div>
             </div>
 
-            <!-- Right: Screenshots & Slides Dropzone -->
+            <!-- Right: screenshots & slides dropzone -->
             <div class="attachment-col" id="colImages">
               <div class="col-header">
-                <span class="col-title">📸 Geteilte Folien &amp; Screenshots</span>
-                <span class="col-sub"><kbd class="kbd-badge">Strg+V</kbd></span>
+                <span class="col-title" data-i18n="attachments.images_title"></span>
+                <span class="col-sub"><kbd class="kbd-badge" data-i18n="attachments.shortcut"></kbd></span>
               </div>
 
-              <!-- Interactive Dropzone -->
-              <div id="dropZone" class="drop-zone" tabindex="0" title="Screenshots oder Textdateien ablegen, klicken oder Strg+V">
+              <div id="dropZone" class="drop-zone" tabindex="0" data-i18n-title="attachments.drop_title">
                 <div class="drop-icon">
-                  <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: var(--cyan);">
+                  <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
                 </div>
                 <div class="drop-label">
-                  <strong>Screenshots oder Dateien ablegen</strong>
+                  <strong data-i18n="attachments.drop_label"></strong>
                 </div>
-                <div class="drop-hint">Hier klicken, Datei ablegen oder <strong>Strg+V</strong> drücken<br><span style="color: var(--text-muted);">PNG, JPG, WEBP, TXT, MD, CSV</span></div>
-                <input type="file" id="fileAttachmentInput" multiple accept="image/png,image/jpeg,image/webp,text/plain,.txt,.md,.log,.csv" style="display: none;" />
+                <div class="drop-hint">
+                  <span data-i18n-html="attachments.drop_hint"></span><br>
+                  <span class="drop-formats">PNG, JPG, WEBP, TXT, MD, CSV</span>
+                </div>
+                <input type="file" id="fileAttachmentInput" multiple accept="image/png,image/jpeg,image/webp,text/plain,.txt,.md,.log,.csv" hidden />
               </div>
 
-              <!-- Thumbnails Container -->
-              <div id="thumbnailsContainer" class="thumbnails-grid" style="display: none;">
-                <!-- Dynamisch befüllt -->
-              </div>
+              <div id="thumbnailsContainer" class="thumbnails-grid" style="display: none;"></div>
             </div>
           </div>
         </div>
@@ -217,15 +202,15 @@
             <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
             </svg>
-            <span id="recordBtnText">Aufnahme starten</span>
+            <span id="recordBtnText"></span>
           </button>
         </div>
 
-        <button id="cancelRecordBtn" class="cancel-btn" style="display: none;" title="Aufnahme verwerfen">
+        <button id="cancelRecordBtn" class="cancel-btn" style="display: none;" data-i18n-title="record.discard_title">
           <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
-          Verwerfen
+          <span data-i18n="record.discard"></span>
         </button>
       </div>
 
@@ -233,8 +218,8 @@
       <div id="processingBanner" class="processing-banner" style="display: none;">
         <div class="spinner"></div>
         <div>
-          <strong style="color: #ffffff; font-size: 0.9rem;">Gemini KI analysiert die Tonspur...</strong>
-          <p id="processStepText" style="color: #94a3b8; font-size: 0.8rem;">Verarbeite Audio...</p>
+          <strong class="processing-title" data-i18n="processing.title"></strong>
+          <p id="processStepText" class="processing-step"></p>
         </div>
       </div>
       <div id="errorBanner" class="error-banner" role="alert" hidden></div>
@@ -242,61 +227,54 @@
 
     <!-- Content Grid: Sidebar + Viewer -->
     <div class="content-grid">
-      
+
       <!-- Meetings History Sidebar -->
       <div class="sidebar-card">
         <div class="sidebar-header">
           <div class="sidebar-title-group">
-            <span>Gespeicherte Meetings</span>
+            <span data-i18n="sidebar.meetings"></span>
             <span id="meetingCount" class="counter-badge">0</span>
           </div>
         </div>
         <div id="unprocessedSection" class="unprocessed-section" hidden>
-          <div class="unprocessed-title">Nicht analysierte Aufnahmen</div>
+          <div class="unprocessed-title" data-i18n="sidebar.unprocessed"></div>
           <div id="unprocessedList" class="unprocessed-list"></div>
         </div>
         <div class="search-input-wrapper">
-          <input 
-            type="text" 
-            id="searchInput" 
-            class="search-input" 
-            placeholder="🔍 Suchen (Thema, Teilnehmer, Transkript)..." 
-          />
-          <button id="clearSearchBtn" class="clear-search-btn" style="display: none;" title="Suche leeren (Esc)">✕</button>
+          <input type="text" id="searchInput" class="search-input" data-i18n-placeholder="sidebar.search_placeholder" />
+          <button id="clearSearchBtn" class="clear-search-btn" style="display: none;" data-i18n-title="sidebar.clear_search">✕</button>
         </div>
-        <div id="meetingsList" class="meetings-list">
-          <!-- Dynamisch befüllt -->
-        </div>
+        <div id="meetingsList" class="meetings-list"></div>
       </div>
 
       <!-- Protocol Viewer -->
       <div class="viewer-card">
         <div class="viewer-header">
           <div class="viewer-info">
-            <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
-              <h2 id="viewTitle" style="font-size: 1.2rem; font-weight: 700; color: #fff; margin: 0;">Kein Meeting ausgewählt</h2>
-              <span id="searchMatchBadge" class="search-match-badge found" style="display: none;">0 Treffer</span>
+            <div class="viewer-title-row">
+              <h2 id="viewTitle" class="viewer-title"></h2>
+              <span id="searchMatchBadge" class="search-match-badge found" style="display: none;"></span>
             </div>
-            <p id="viewMeta" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">-</p>
+            <p id="viewMeta" class="viewer-meta"></p>
           </div>
           <div class="viewer-tools">
-            <button id="copyMdBtn" class="btn-secondary btn-primary-action" style="display: none;" title="Protokoll in Zwischenablage kopieren (formatiert für Teams, Outlook & Notizen)">
+            <button id="copyMdBtn" class="btn-secondary btn-primary-action" style="display: none;" data-i18n-title="viewer.copy_title">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
               </svg>
-              <span>Kopieren</span>
+              <span data-i18n="viewer.copy"></span>
             </button>
-            <button id="downloadMdBtn" class="btn-secondary" style="display: none;" title="Protokoll als Markdown-Datei herunterladen">
+            <button id="downloadMdBtn" class="btn-secondary" style="display: none;" data-i18n-title="viewer.download_title">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
-              <span>Download</span>
+              <span data-i18n="viewer.download"></span>
             </button>
-            <button id="deleteMeetingBtn" class="btn-secondary btn-danger" style="display: none;" title="Dieses Meeting löschen">
+            <button id="deleteMeetingBtn" class="btn-secondary btn-danger" style="display: none;" data-i18n-title="sidebar.delete_meeting">
               <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              <span>Löschen</span>
+              <span data-i18n="viewer.delete"></span>
             </button>
           </div>
         </div>
@@ -304,37 +282,22 @@
         <!-- Audio Player Section -->
         <div id="audioPlayerSection" class="audio-player-wrapper" style="display: none;">
           <div class="audio-player-row">
-            <span style="font-size: 0.85rem; font-weight: 600; white-space: nowrap;">🔊 Tonspur:</span>
+            <span class="audio-label" data-i18n="viewer.audio"></span>
             <audio id="audioElement" controls></audio>
           </div>
           <div class="audio-mode-bar">
-            <span class="audio-mode-label">Kanal-Mix:</span>
+            <span class="audio-mode-label" data-i18n="viewer.channel_mix"></span>
             <div class="audio-mode-pills">
-              <button type="button" class="audio-mode-btn active" data-mode="mono" title="Zentriert auf beiden Ohren (angenehm für Kopfhörer)">
-                🔉 Beide Ohren (Mono)
-              </button>
-              <button type="button" class="audio-mode-btn" data-mode="stereo" title="Originale Stereotrennung (Links = Ich, Rechts = Teams)">
-                🎧 Stereo
-              </button>
-              <button type="button" class="audio-mode-btn" data-mode="right" title="Nur Teams / Andere Teilnehmer hören">
-                👥 Nur Teams
-              </button>
-              <button type="button" class="audio-mode-btn" data-mode="left" title="Nur eigenes Mikrofon hören">
-                🎙️ Nur Ich
-              </button>
+              <button type="button" class="audio-mode-btn active" data-mode="mono" data-i18n="viewer.mode_mono" data-i18n-title="viewer.mode_mono_title"></button>
+              <button type="button" class="audio-mode-btn" data-mode="stereo" data-i18n="viewer.mode_stereo" data-i18n-title="viewer.mode_stereo_title"></button>
+              <button type="button" class="audio-mode-btn" data-mode="right" data-i18n="viewer.mode_right" data-i18n-title="viewer.mode_right_title"></button>
+              <button type="button" class="audio-mode-btn" data-mode="left" data-i18n="viewer.mode_left" data-i18n-title="viewer.mode_left_title"></button>
             </div>
           </div>
         </div>
 
         <!-- Rendered Markdown Body -->
-        <div id="markdownBody" class="markdown-body">
-          <div class="empty-state">
-            <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <p>Starte eine Aufnahme oder wähle links ein vergangenes Meeting aus,<br>um die Zusammenfassung und das Transkript anzuzeigen.</p>
-          </div>
-        </div>
+        <div id="markdownBody" class="markdown-body"></div>
       </div>
 
     </div>
@@ -345,73 +308,63 @@
   <div id="settingsModal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <h2 style="font-size: 1.25rem; font-weight: 700;">⚙️ Einstellungen & API-Key</h2>
-        <button id="closeSettingsX" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.3rem; line-height: 1;">✕</button>
+        <h2 class="modal-title" data-i18n="settings.title"></h2>
+        <button id="closeSettingsX" class="modal-close" data-i18n-title="common.close">✕</button>
       </div>
-      
-      <div id="welcomeBanner" style="display: none; background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 12px; padding: 1rem; font-size: 0.85rem; line-height: 1.5; color: #cbd5e1;">
-        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
-          <img src="/static/logo.png" alt="GhostScribe" style="width: 32px; height: 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.4);" />
-          <strong style="color: #fff; font-size: 0.95rem;">👋 Willkommen bei GhostScribe!</strong>
+
+      <div id="welcomeBanner" class="welcome-banner" style="display: none;">
+        <div class="welcome-header">
+          <img src="/static/logo.png" class="welcome-logo" alt="" />
+          <strong class="welcome-title" data-i18n="settings.welcome_title"></strong>
         </div>
-        Um deine Meetings per KI zu transkribieren und zusammenzufassen, benötigst du einen Google Gemini API-Key.<br>
-        Diesen erhältst du kostenlos in unter 1 Minute bei Google AI Studio.
+        <p data-i18n-html="settings.welcome_text"></p>
+      </div>
+
+      <div class="form-group">
+        <label for="languageSelect" data-i18n="settings.language"></label>
+        <select id="languageSelect" class="form-input"></select>
       </div>
 
       <div class="form-group">
         <div class="form-label-row">
-          <label for="apiKeyInput" style="margin-bottom: 0;">
-            Google Gemini API Key
-            <span id="apiKeyDot" class="status-dot-mini green" title="Gespeichert &amp; Aktiv"></span>
+          <label for="apiKeyInput">
+            <span data-i18n="settings.api_key"></span>
+            <span id="apiKeyDot" class="status-dot-mini green"></span>
           </label>
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="form-link">
-            Key holen ↗
-          </a>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="form-link" data-i18n="settings.get_key"></a>
         </div>
-        <input 
-          type="password" 
-          id="apiKeyInput" 
-          class="form-input" 
-          placeholder="AIzaSy..." 
-          autocomplete="off"
-        />
-        <span id="apiKeyHint" class="form-hint">
-          🔒 Gespeichert in deiner lokalen .env Datei.
-        </span>
+        <input type="password" id="apiKeyInput" class="form-input" placeholder="AIzaSy..." autocomplete="off" />
+        <span id="apiKeyHint" class="form-hint"></span>
       </div>
 
       <div class="form-group">
-        <label for="settingsUserNameInput">Eigener Name im Protokoll</label>
-        <input type="text" id="settingsUserNameInput" class="form-input" placeholder="z. B. Alex" />
-        <span style="font-size: 0.75rem; color: var(--text-sub); line-height: 1.4; display: block; margin-top: 4px;">
-          💡 <strong>Tipp:</strong> Trage deinen echten Vornamen/Rufnamen ein, wie Kollegen dich im Call ansprechen. Wenn hier ein Pseudonym steht, könnte die KI deinen echten Namen für einen anderen Teilnehmer halten.
-        </span>
+        <label for="settingsUserNameInput" data-i18n="settings.user_name"></label>
+        <input type="text" id="settingsUserNameInput" class="form-input" data-i18n-placeholder="settings.user_name_placeholder" />
+        <span class="form-hint" data-i18n-html="settings.user_name_tip"></span>
       </div>
 
       <div class="form-group">
-        <label for="modelSelect">Gemini Modell</label>
+        <label for="modelSelect" data-i18n="settings.model"></label>
         <select id="modelSelect" class="form-input">
-          <option value="gemini-flash-latest" selected>Gemini 3 Flash (Empfohlen – Neueste Generation)</option>
+          <option value="gemini-flash-latest" selected data-i18n="settings.model_latest"></option>
           <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-          <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Höchste Schärfe &amp; Detailtiefe)</option>
-          <option value="gemini-2.5-flash">Gemini 2.5 Flash (Vorherige Generation)</option>
+          <option value="gemini-3.1-pro-preview" data-i18n="settings.model_pro"></option>
+          <option value="gemini-2.5-flash" data-i18n="settings.model_previous"></option>
         </select>
       </div>
 
       <div class="form-group">
-        <label for="defaultAiActSelect">Standard Aufnahmemodus</label>
+        <label for="defaultAiActSelect" data-i18n="settings.default_mode"></label>
         <select id="defaultAiActSelect" class="form-input">
-          <option value="true">🛡️ EU AI Act konform (Sachlich &amp; Neutral – Empfohlen)</option>
-          <option value="false">🎭 Mit Stimmungsanalyse (Erweitert – inkl. Tonalität &amp; Frustration)</option>
+          <option value="true" data-i18n="settings.mode_ai_act"></option>
+          <option value="false" data-i18n="settings.mode_sentiment"></option>
         </select>
-        <span class="form-hint">
-          Rechtssicher gemäß Art. 5 KI-VO (Verbot von Emotionserkennung am Arbeitsplatz).
-        </span>
+        <span class="form-hint" data-i18n="settings.mode_hint"></span>
       </div>
 
       <div class="modal-actions">
-        <button id="closeSettingsBtn" class="btn-secondary">Schließen</button>
-        <button id="saveSettingsBtn" class="btn-secondary" style="background: var(--primary); border-color: var(--primary); font-weight: 600;">Speichern</button>
+        <button id="closeSettingsBtn" class="btn-secondary" data-i18n="common.close"></button>
+        <button id="saveSettingsBtn" class="btn-secondary btn-primary" data-i18n="settings.save"></button>
       </div>
     </div>
   </div>
@@ -420,47 +373,39 @@
   <div id="sentimentConfirmModal" class="modal-overlay">
     <div class="modal-card sentiment-warning-card">
       <div class="modal-header">
-        <div style="display: flex; align-items: center; gap: 0.65rem;">
-          <div style="width: 36px; height: 36px; border-radius: 10px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
-            ⚠️
-          </div>
+        <div class="modal-title-group">
+          <div class="warning-icon">⚠️</div>
           <div>
-            <h3 style="margin: 0; font-size: 1.1rem; color: #fff; font-weight: 700;">Rechtlicher Hinweis: Stimmungsanalyse</h3>
-            <span style="font-size: 0.75rem; color: #fca5a5;">EU AI Act – Artikel 5 (KI-Verordnung)</span>
+            <h3 class="modal-title" data-i18n="sentiment.title"></h3>
+            <span class="warning-subtitle" data-i18n="sentiment.subtitle"></span>
           </div>
         </div>
-        <button id="closeSentimentModalX" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.3rem; line-height: 1;">✕</button>
+        <button id="closeSentimentModalX" class="modal-close" data-i18n-title="common.close">✕</button>
       </div>
 
-      <div style="font-size: 0.88rem; line-height: 1.6; color: #e2e8f0; display: flex; flex-direction: column; gap: 0.85rem; margin: 0.5rem 0 1rem 0;">
-        <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.28); border-radius: 10px; padding: 0.85rem 1rem; color: #fecaca;">
-          <strong>Achtung:</strong> Die Europäische KI-Verordnung untersagt den Einsatz von KI-Systemen zur <strong>Emotionserkennung am Arbeitsplatz</strong> und in Bildungseinrichtungen grundsätzlich.
-        </div>
-        <p style="margin: 0;">
-          In diesem Modus analysiert Google Gemini persönliche Gefühle, Frustrationsmomente, Zufriedenheit und Tonalität der Beteiligten und hält diese im Protokoll fest.
-        </p>
-        <p style="margin: 0; color: var(--text-sub); font-size: 0.8rem;">
-          Die Aktivierung erfolgt auf eigene Verantwortung. Stelle sicher, dass alle Teilnehmenden der Besprechung ausdrücklich eingewilligt haben.
-        </p>
+      <div class="warning-body">
+        <div class="warning-box" data-i18n-html="sentiment.warning"></div>
+        <p data-i18n="sentiment.description"></p>
+        <p class="warning-note" data-i18n="sentiment.responsibility"></p>
       </div>
 
       <div class="modal-actions modal-actions-split">
-        <button id="cancelSentimentBtn" class="btn-secondary btn-choice-safe">🛡️ AI Act konform bleiben</button>
-        <button id="confirmSentimentBtn" class="btn-secondary btn-choice-risk">⚠️ Verstanden &amp; aktivieren</button>
+        <button id="cancelSentimentBtn" class="btn-secondary btn-choice-safe" data-i18n="sentiment.cancel"></button>
+        <button id="confirmSentimentBtn" class="btn-secondary btn-choice-risk" data-i18n="sentiment.confirm"></button>
       </div>
     </div>
   </div>
 
-<!-- Lightbox Modal for Screenshots -->
+  <!-- Lightbox Modal for Screenshots -->
   <div id="imageLightboxModal" class="lightbox-overlay" style="display: none;">
     <div class="lightbox-content">
-      <button id="closeLightboxBtn" class="lightbox-close" title="Schließen (Esc)">✕</button>
-      <img id="lightboxImg" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="Screenshot Vorschau" />
+      <button id="closeLightboxBtn" class="lightbox-close" data-i18n-title="lightbox.close">✕</button>
+      <img id="lightboxImg" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" data-i18n-alt="attachments.preview_alt" />
       <div id="lightboxCaption" class="lightbox-caption"></div>
     </div>
   </div>
 
-  <!-- Toast Notification for Strg+V -->
+  <!-- Toast Notification -->
   <div id="toastNotification" class="toast-notification"></div>
   <script src="/static/app.js" defer></script>
 </body>

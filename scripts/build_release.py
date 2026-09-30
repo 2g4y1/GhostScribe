@@ -13,37 +13,38 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE_FILES = [
-    "main.py",
-    "app.py",
-    "cli.py",
-    "recorder.py",
-    "analyzer.py",
-    "utils.py",
-    "requirements.txt",
     "start.bat",
     "install_requirements.bat",
+    "requirements.txt",
     ".env.example",
     "README.md",
     "LICENSE",
 ]
-RELEASE_DIRS = ["static"]
+PACKAGE_DIR = "ghostscribe"
 EMPTY_DIRS = ["recordings", "meetings"]
 # Last line of defense in case one of the lists above is ever extended carelessly
-FORBIDDEN = re.compile(r"(^|/)\.env$|\.(wav|mp3|flac)$|^(recordings|meetings)/")
+FORBIDDEN = re.compile(r"(^|/)\.env$|\.(wav|mp3|flac)$|^(recordings|meetings)/|__pycache__|\.pyc$")
 
 
 def project_version() -> str:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    return re.search(r'^version = "([^"]+)"', pyproject, re.MULTILINE).group(1)
+    match = re.search(r'^version = "([^"]+)"', pyproject, re.MULTILINE)
+    if not match:
+        sys.exit("No version found in pyproject.toml")
+    return match.group(1)
+
+
+def release_files() -> list[Path]:
+    package_files = (ROOT / PACKAGE_DIR).rglob("*")
+    code_and_assets = [p for p in package_files if p.is_file() and "__pycache__" not in p.parts]
+    return [ROOT / name for name in RELEASE_FILES] + sorted(code_and_assets)
 
 
 def main() -> None:
-    files = [ROOT / name for name in RELEASE_FILES]
-    for directory in RELEASE_DIRS:
-        files += sorted(path for path in (ROOT / directory).rglob("*") if path.is_file())
+    files = release_files()
     missing = [str(path.relative_to(ROOT)) for path in files if not path.is_file()]
     if missing:
-        sys.exit(f"Fehlende Dateien: {', '.join(missing)}")
+        sys.exit(f"Missing files: {', '.join(missing)}")
 
     version = project_version()
     prefix = f"GhostScribe-v{version}/"
@@ -56,12 +57,12 @@ def main() -> None:
             if FORBIDDEN.search(name):
                 archive.close()
                 target.unlink()
-                sys.exit(f"Abbruch: '{name}' darf nicht ins Release.")
+                sys.exit(f"Aborted: '{name}' must not be part of the release.")
             archive.write(path, prefix + name)
         for directory in EMPTY_DIRS:
             archive.writestr(f"{prefix}{directory}/.gitkeep", "")
 
-    print(f"{target.relative_to(ROOT)}: {len(files)} Dateien, {target.stat().st_size // 1024} KB")
+    print(f"{target.relative_to(ROOT)}: {len(files)} files, {target.stat().st_size // 1024} KB")
 
 
 if __name__ == "__main__":

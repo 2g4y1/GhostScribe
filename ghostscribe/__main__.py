@@ -1,6 +1,5 @@
 """
-Main launcher for GhostScribe.
-Starts the modern Web UI by default, or accepts '--cli' flag for terminal mode.
+Entry point: "python -m ghostscribe" starts the web interface, "python -m ghostscribe --cli" the terminal version.
 """
 
 import sys
@@ -9,9 +8,11 @@ import time
 import webbrowser
 
 import uvicorn
+from dotenv import load_dotenv
 
-from cli import main as run_cli
-from utils import APP_URL, HOST, PORT, ensure_utf8_console
+from ghostscribe.cli import main as run_cli
+from ghostscribe.i18n import translate
+from ghostscribe.utils import APP_URL, BANNER, HOST, PORT, ensure_utf8_console, print_banner
 
 
 def open_browser():
@@ -19,18 +20,23 @@ def open_browser():
     webbrowser.open(APP_URL)
 
 
-if __name__ == "__main__":
+def main():
     ensure_utf8_console()
+    load_dotenv(".env")
     if "--cli" in sys.argv:
         run_cli()
-    else:
-        print("\n" + "=" * 60)
-        print("🎙️  GHOSTSCRIBE - BOT-FREE AI MEETING RECORDER (Gemini)")
-        print("=" * 60)
-        print(f"🚀 Öffne Web-Oberfläche auf {APP_URL} ...")
-        print("   Beenden: Strg+C drücken oder dieses Fenster schließen.")
-        print("   Tipp: Du kannst das Tool auch im Terminal starten mit: python main.py --cli\n")
+        return
 
-        # Browser nach kurzem Start automatisch öffnen
-        threading.Thread(target=open_browser, daemon=True).start()
-        uvicorn.run("app:app", host=HOST, port=PORT, reload=False)
+    print_banner(
+        BANNER,
+        translate("terminal.opening_ui", url=APP_URL),
+        "   " + translate("terminal.stop_hint"),
+        "   " + translate("terminal.cli_tip", command="python -m ghostscribe --cli"),
+    )
+    # Open the browser once the server had a moment to start
+    threading.Thread(target=open_browser, daemon=True).start()
+    uvicorn.run("ghostscribe.app:app", host=HOST, port=PORT, reload=False)
+
+
+if __name__ == "__main__":
+    main()

@@ -3,7 +3,7 @@ from datetime import datetime
 
 import numpy as np
 
-from analyzer import (
+from ghostscribe.analyzer import (
     extract_channel_activity_summary,
     extract_title_from_markdown,
     get_system_instruction,

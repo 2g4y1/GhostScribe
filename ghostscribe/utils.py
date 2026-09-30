@@ -8,6 +8,7 @@ import sys
 HOST = "127.0.0.1"
 PORT = 8765
 APP_URL = f"http://localhost:{PORT}"
+BANNER = "🎙️  GHOSTSCRIBE - BOT-FREE AI MEETING RECORDER (Gemini)"
 
 
 def ensure_utf8_console() -> None:
@@ -20,6 +21,14 @@ def ensure_utf8_console() -> None:
                 pass
 
 
+def print_banner(*lines: str, width: int = 68) -> None:
+    """Prints a framed block of lines to the terminal."""
+    print("\n" + "=" * width)
+    for line in lines:
+        print(line)
+    print("=" * width + "\n")
+
+
 def format_duration(seconds: float) -> str:
     """Formats a duration in seconds as HH:MM:SS."""
     total = int(seconds)
@@ -30,7 +39,7 @@ def update_env_file(updates: dict[str, str], path: str = ".env") -> None:
     """Sets KEY=value entries in the .env file (replacing existing lines) and in os.environ."""
     for key, value in updates.items():
         if "\n" in value or "\r" in value:
-            raise ValueError(f"Ungültiger Wert für {key}: Zeilenumbrüche sind nicht erlaubt.")
+            raise ValueError(f"Invalid value for {key}: line breaks are not allowed.")
 
     lines = []
     if os.path.exists(path):

@@ -1,21 +1,16 @@
 """
-Shared fixtures. The app resolves static/, recordings/, meetings/ and .env relative to the
-working directory, so the API tests run in an isolated temporary directory with a dummy .env.
+Shared fixtures. The app keeps recordings/, meetings/ and .env in the working directory,
+so the API tests run in an isolated temporary directory with a dummy .env.
 """
 
 import os
-import shutil
-from pathlib import Path
 
 import pytest
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="session")
 def workdir(tmp_path_factory):
     path = tmp_path_factory.mktemp("ghostscribe")
-    shutil.copytree(ROOT / "static", path / "static")
     (path / "meetings").mkdir()
     (path / ".env").write_text("GEMINI_API_KEY=dummy-key-for-tests\nGEMINI_MODEL=test-model\n", encoding="utf-8")
     previous = os.getcwd()
@@ -28,7 +23,7 @@ def workdir(tmp_path_factory):
 def client(workdir):
     from fastapi.testclient import TestClient
 
-    import app
+    from ghostscribe import app
 
     return TestClient(app.app, base_url="http://127.0.0.1:8765")
 

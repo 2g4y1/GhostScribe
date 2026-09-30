@@ -69,6 +69,17 @@ def test_unprocessed_recordings_are_listed_once_and_can_be_deleted(client, workd
     assert client.delete("/api/recordings/meeting_demo.mp3").status_code == 409  # has a protocol
 
 
+def test_meetings_are_sorted_by_meeting_date_not_by_file_date(client, write_file):
+    newer = write_file("meetings/meeting_sort_b.json", json.dumps({"meeting_start": "2026-09-02T10:00:00"}))
+    older = write_file("meetings/meeting_sort_a.json", json.dumps({"meeting_start": "2026-09-01T10:00:00"}))
+    os.utime(older, (2_000_000, 2_000_000))  # written later, e.g. after a retried analysis
+    os.utime(newer, (1_000_000, 1_000_000))
+
+    ids = [m["id"] for m in client.get("/api/meetings").json() if m["id"].startswith("meeting_sort_")]
+
+    assert ids == ["meeting_sort_b", "meeting_sort_a"]
+
+
 def test_analyzing_a_missing_recording_returns_404(client):
     assert client.post("/api/recordings/missing.mp3/analyze").status_code == 404
 

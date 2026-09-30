@@ -7,7 +7,10 @@ import glob
 import json
 import logging
 import os
+import threading
+import time
 from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
@@ -15,15 +18,18 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from analyzer import DEFAULT_MODEL, MeetingAnalyzer, recording_start
-from recorder import MeetingRecorder
-from utils import APP_URL, PORT, format_duration, update_env_file
+from ghostscribe.analyzer import DEFAULT_MODEL, MeetingAnalyzer, recording_start
+from ghostscribe.i18n import available_languages, configured_language, translate
+from ghostscribe.recorder import MeetingRecorder
+from ghostscribe.utils import APP_URL, PORT, format_duration, print_banner, update_env_file
 
-load_dotenv(".env")  # dieselbe Datei, die update_env_file() beschreibt
+load_dotenv(".env")  # the same file update_env_file() writes
+
+logger = logging.getLogger(__name__)
 
 
-# Filtert hochfrequente Polling-Aufrufe von /api/status aus dem Terminal,
-# damit Aufnahme-Meldungen und Status-Updates im CMD-Fenster immer klar lesbar bleiben.
+# Hides the frequent /api/status polling requests from the access log,
+# so recording messages and progress updates in the terminal stay readable.
 class StatusEndpointFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return "/api/status" not in record.getMessage()
@@ -44,12 +50,14 @@ async def allow_only_local_ui(request: Request, call_next):
     if request.headers.get("host") not in ALLOWED_HOSTS or (
         origin and origin.removeprefix("http://") not in ALLOWED_HOSTS
     ):
-        return JSONResponse(status_code=403, content={"detail": "Zugriff nur über die lokale GhostScribe-Oberfläche."})
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
     return await call_next(request)
 
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+# Runtime data lives in the working directory (start.bat runs from the app folder)
 RECORDINGS_DIR = "recordings"
 MEETINGS_DIR = "meetings"
 ATTACHMENTS_DIR = os.path.join(RECORDINGS_DIR, "attachments")
@@ -101,15 +109,23 @@ class AnalyzeRequest(BaseModel):
 
 
 class SettingsRequest(BaseModel):
+    """Every field is optional; only the fields that are sent are changed."""
+
     api_key: str = ""
-    model: str = DEFAULT_MODEL
+    model: str | None = None
     default_ai_act_mode: bool | None = None
+    ui_language: str | None = None
+
+
+def api_error(status_code: int, key: str, **params) -> HTTPException:
+    """HTTP error with a message in the configured UI language."""
+    return HTTPException(status_code=status_code, detail=translate(key, **params))
 
 
 def _safe_filename(name: str) -> str:
     """Rejects anything but a plain file name (path traversal protection, e.g. '../.env')."""
     if name in ("", ".", "..") or name != os.path.basename(name):
-        raise HTTPException(status_code=400, detail="Ungültiger Dateiname.")
+        raise api_error(400, "api.invalid_filename")
     return name
 
 
@@ -173,16 +189,30 @@ def _processed_audio_bases() -> set[str]:
     return bases
 
 
+def _recording_heartbeat(started_at: float):
+    """Prints the recording status to the terminal every 5 seconds while this recording runs."""
+    while True:
+        time.sleep(5)
+        if not recorder.is_recording or recorder.start_time != started_at:
+            return
+        print(
+            translate(
+                "terminal.heartbeat",
+                duration=format_duration(recorder.get_duration()),
+                mic=int(recorder.mic_level * 100),
+                teams=int(recorder.loopback_level * 100),
+            )
+        )
+
+
 @app.get("/")
 def get_index():
-    return FileResponse("static/index.html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/favicon.ico")
 def get_favicon():
-    if os.path.exists("static/logo.png"):
-        return FileResponse("static/logo.png", media_type="image/png")
-    raise HTTPException(status_code=404, detail="Favicon nicht gefunden")
+    return FileResponse(STATIC_DIR / "logo.png", media_type="image/png")
 
 
 @app.get("/api/status")
@@ -209,24 +239,30 @@ def get_status():
     }
 
 
+@app.get("/api/languages")
+def list_languages():
+    """Available UI languages; current is None until a language was chosen (the UI then uses the browser language)."""
+    return {"current": configured_language(), "available": available_languages()}
+
+
 @app.get("/api/devices")
 def list_devices():
     """Selectable microphones and loopback devices (not available while recording)."""
     if recorder.is_recording:
-        raise HTTPException(status_code=409, detail="Während einer Aufnahme nicht verfügbar.")
+        raise api_error(409, "api.busy")
     try:
         return MeetingRecorder.list_devices()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Audiogeräte konnten nicht ermittelt werden: {e}") from e
+        raise api_error(500, "api.devices_failed", error=e) from e
 
 
 @app.post("/api/record/start")
 def start_recording(req: StartRequest):
     if app_state["status"] in ["recording", "processing"]:
-        raise HTTPException(status_code=400, detail="Aufnahme oder Verarbeitung läuft bereits.")
+        raise api_error(400, "api.busy")
 
     try:
-        app_state["current_title"] = req.title.strip() or "Teams Besprechung"
+        app_state["current_title"] = req.title.strip()
         app_state["current_participants"] = req.participants.strip()
         app_state["current_meeting_type"] = req.meeting_type.strip() or "standard"
         app_state["current_user_name"] = req.user_name.strip() or "Ich"
@@ -234,43 +270,45 @@ def start_recording(req: StartRequest):
         app_state["last_error"] = None
         recorder.start(mic_index=req.mic_device, loopback_index=req.loopback_device)
         app_state["status"] = "recording"
-
-        print("\n" + "=" * 68)
-        print("🔴 [AUFNAHME GESTARTET]")
-        print(f"   Thema:        {app_state['current_title']}")
-        print(f"   Eigener Name: {app_state['current_user_name']} (Kanal 0 / Mikrofon)")
-        if app_state["current_participants"]:
-            print(f"   Teilnehmer:   {app_state['current_participants']} (Kanal 1 / Teams)")
-        print(f"   Mikrofon:     {recorder.mic_info['name']}")
-        print(f"   Systemton:    {recorder.loopback_info['name']}")
-        print(f"   Startzeit:    {datetime.now().strftime('%H:%M:%S')}")
-        print("   ℹ️  HINWEIS:    Die Aufnahme läuft stabil als Dienst im Hintergrund,")
-        print("                 selbst wenn alle Browserfenster geschlossen werden!")
-        print(f"   ➡️  Web-UI:     {APP_URL} (jederzeit wieder aufrufbar)")
-        print("=" * 68 + "\n")
-
-        return {"success": True, "title": app_state["current_title"]}
+        threading.Thread(target=_recording_heartbeat, args=(recorder.start_time,), daemon=True).start()
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
+        logger.exception("Recording could not be started")
         app_state["status"] = "error"
         app_state["last_error"] = str(e)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+    rows = [
+        ("terminal.topic", app_state["current_title"] or translate("terminal.topic_auto")),
+        ("terminal.own_name", translate("terminal.own_name_value", name=app_state["current_user_name"])),
+    ]
+    if app_state["current_participants"]:
+        rows.append(
+            ("terminal.participants", translate("terminal.participants_value", names=app_state["current_participants"]))
+        )
+    rows += [
+        ("terminal.microphone", recorder.mic_info["name"]),
+        ("terminal.system_audio", recorder.loopback_info["name"]),
+        ("terminal.start_time", datetime.now().strftime("%H:%M:%S")),
+        ("terminal.web_ui", translate("terminal.web_ui_value", url=APP_URL)),
+    ]
+    print_banner(
+        translate("terminal.recording_started"),
+        *(f"   {translate(label):<15}{value}" for label, value in rows),
+        "   " + translate("terminal.background_note"),
+    )
+    return {"success": True, "title": app_state["current_title"]}
 
 
 @app.post("/api/record/cancel")
 def cancel_recording():
     if app_state["status"] != "recording":
-        raise HTTPException(status_code=400, detail="Keine aktive Aufnahme zum Abbrechen.")
+        raise api_error(400, "api.no_active_recording")
 
     recorder.cancel()
     app_state["status"] = "idle"
-    app_state["process_step"] = "Aufnahme abgebrochen."
-    print("\n" + "=" * 68)
-    print("❌ [AUFNAHME ABGEBROCHEN] Aufnahmedaten verworfen.")
-    print("=" * 68 + "\n")
-    return {"success": True, "message": "Aufnahme erfolgreich verworfen."}
+    app_state["process_step"] = translate("step.cancelled")
+    print_banner(translate("terminal.recording_cancelled"))
+    return {"success": True}
 
 
 def save_attachments(images: list[AttachmentItem]) -> list[str]:
@@ -306,25 +344,28 @@ def save_attachments(images: list[AttachmentItem]) -> list[str]:
                 f.write(img_bytes)
             saved_paths.append(file_path)
         except Exception as e:
-            print(f"[Attachment] Fehler beim Speichern von Bild {idx + 1}: {e}")
+            logger.warning("Could not save attachment %d: %s", idx + 1, e)
 
     return saved_paths
+
+
+def _set_step(key: str, **params):
+    """Shows a progress message in the web UI and the terminal."""
+    app_state["process_step"] = translate(key, **params)
+    print(f"   → {app_state['process_step']}")
 
 
 def run_gemini_analysis(audio_path: str, context: dict):
     """Runs the Gemini analysis. On failure the context file stays, so the recording can be analyzed again."""
     try:
         app_state["status"] = "processing"
-        app_state["process_step"] = "Starte Analyse..."
+        _set_step("step.starting_analysis")
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             app_state["status"] = "idle"
-            app_state["process_step"] = "Audiodatei gespeichert (Kein API-Key für Analyse vorhanden)."
+            _set_step("step.saved_without_key")
             return
-
-        def update_step(msg):
-            app_state["process_step"] = msg
 
         MeetingAnalyzer(api_key=api_key).analyze_meeting(
             audio_filepath=audio_path,
@@ -335,7 +376,7 @@ def run_gemini_analysis(audio_path: str, context: dict):
             chat_text=context.get("chat_text", ""),
             image_filepaths=context.get("image_paths", []),
             duration=context.get("duration"),
-            on_status_update=update_step,
+            on_status_update=_set_step,
             ai_act_mode=context.get("ai_act_mode", True),
         )
 
@@ -343,11 +384,12 @@ def run_gemini_analysis(audio_path: str, context: dict):
         _delete_files([_context_path(audio_base)])
         app_state["last_meeting_id"] = audio_base
         app_state["status"] = "idle"
-        app_state["process_step"] = "Analyse erfolgreich abgeschlossen!"
+        _set_step("step.done")
     except Exception as e:
+        logger.exception("Analysis failed")
         app_state["status"] = "error"
         app_state["last_error"] = str(e)
-        app_state["process_step"] = f"Fehler: {e}"
+        app_state["process_step"] = ""
 
 
 def _save_and_analyze(context: dict):
@@ -355,21 +397,22 @@ def _save_and_analyze(context: dict):
     try:
         audio_path = recorder.save(compress=True)
     except Exception as e:
+        logger.exception("Audio could not be saved")
         app_state["status"] = "error"
-        app_state["last_error"] = f"Audiodatei konnte nicht gespeichert werden: {e}"
+        app_state["last_error"] = translate("error.save_audio_failed", error=e)
         return
 
     audio_base = os.path.splitext(os.path.basename(audio_path))[0]
     with open(_context_path(audio_base), "w", encoding="utf-8") as f:
         json.dump(context, f, indent=2, ensure_ascii=False)
-    print(f"   Audiodatei gespeichert: {audio_path}")
+    print("   " + translate("terminal.audio_saved", path=audio_path))
     run_gemini_analysis(audio_path, context)
 
 
 @app.post("/api/record/stop")
 def stop_recording(background_tasks: BackgroundTasks, req: StopRequest | None = None):
     if app_state["status"] != "recording":
-        raise HTTPException(status_code=400, detail="Keine aktive Aufnahme.")
+        raise api_error(400, "api.no_active_recording")
 
     recorder.stop_capture()
     req = req or StopRequest(ai_act_mode=app_state["ai_act_mode"])
@@ -384,19 +427,17 @@ def stop_recording(background_tasks: BackgroundTasks, req: StopRequest | None = 
         "duration": format_duration(recorder.end_time - recorder.start_time),
     }
     app_state["status"] = "processing"
-    app_state["process_step"] = "Audio wird synchronisiert und gespeichert..."
+    app_state["process_step"] = translate("step.saving_audio")
     background_tasks.add_task(_save_and_analyze, context)
 
-    mode_text = "EU AI Act Modus" if req.ai_act_mode else "Stimmungsanalyse-Modus"
-    print("\n" + "=" * 68)
-    print(f"⏹️ [AUFNAHME BEENDET] Gesamtlaufzeit: {context['duration']} ({mode_text})")
+    mode = translate("mode.ai_act" if req.ai_act_mode else "mode.sentiment")
+    lines = [translate("terminal.recording_stopped", duration=context["duration"], mode=mode)]
     if context["chat_text"]:
-        print(f"   Chatverlauf:  {len(context['chat_text'])} Zeichen übergeben")
+        lines.append("   " + translate("terminal.chat_attached", count=len(context["chat_text"])))
     if context["image_paths"]:
-        print(f"   Screenshots:  {len(context['image_paths'])} Bild(er) beigefügt")
-    print("   🤖 Speichere Audio und starte Gemini KI-Analyse im Hintergrund...")
-    print("=" * 68 + "\n")
-
+        lines.append("   " + translate("terminal.screenshots_attached", count=len(context["image_paths"])))
+    lines.append("   " + translate("terminal.analysis_background"))
+    print_banner(*lines)
     return {"success": True}
 
 
@@ -408,13 +449,13 @@ def list_unprocessed_recordings():
     for ext in (".wav", ".mp3"):  # MP3 is inserted last and therefore replaces the WAV entry
         for path in glob.glob(os.path.join(RECORDINGS_DIR, "*" + ext)):
             base = os.path.splitext(os.path.basename(path))[0]
-            if base not in processed and os.path.getsize(path) >= 10000:  # Ignoriere winzige Klick-Tests
+            if base not in processed and os.path.getsize(path) >= 10000:  # ignore accidental test clicks
                 recordings[base] = path
     return [
         {
             "filename": os.path.basename(path),
             "title": _load_context(base).get("title", ""),
-            "time": recording_start(path).strftime("%d.%m.%Y %H:%M"),
+            "recorded_at": recording_start(path).isoformat(timespec="minutes"),
             "size_kb": round(os.path.getsize(path) / 1024),
         }
         for base, path in sorted(recordings.items(), reverse=True)
@@ -425,20 +466,20 @@ def list_unprocessed_recordings():
 def analyze_existing_recording(filename: str, background_tasks: BackgroundTasks, req: AnalyzeRequest | None = None):
     audio_path = _recording_path(filename)
     if not os.path.isfile(audio_path):
-        raise HTTPException(status_code=404, detail="Audiodatei nicht gefunden.")
+        raise api_error(404, "api.audio_not_found")
     if app_state["status"] in ["recording", "processing"]:
-        raise HTTPException(status_code=400, detail="Aktuell läuft bereits eine Aufnahme oder Analyse.")
+        raise api_error(400, "api.busy")
 
     req = req or AnalyzeRequest(ai_act_mode=_default_ai_act_mode())
     context = {"ai_act_mode": req.ai_act_mode, "user_name": req.user_name.strip() or "Ich"}
-    # Die gespeicherten Angaben der ursprünglichen Aufnahme (Titel, Chat, Screenshots, Modus) haben Vorrang
+    # The saved input of the original recording (title, chat, screenshots, mode) takes precedence
     context.update(_load_context(os.path.splitext(filename)[0]))
 
     app_state["status"] = "processing"
-    app_state["process_step"] = f"Starte Analyse für {filename}..."
+    app_state["process_step"] = translate("step.starting_analysis_for", name=filename)
     app_state["last_error"] = None
     background_tasks.add_task(run_gemini_analysis, audio_path, context)
-    return {"success": True, "message": "Analyse gestartet."}
+    return {"success": True}
 
 
 @app.delete("/api/recordings/{filename}")
@@ -446,30 +487,28 @@ def delete_recording(filename: str):
     """Deletes a recording without protocol: MP3, WAV original, saved context and screenshots."""
     audio_base = os.path.splitext(_safe_filename(filename))[0]
     if app_state["status"] in ["recording", "processing"]:
-        raise HTTPException(status_code=400, detail="Während einer Aufnahme oder Analyse nicht möglich.")
+        raise api_error(400, "api.busy")
     if audio_base in _processed_audio_bases():
-        raise HTTPException(
-            status_code=409, detail="Zu dieser Aufnahme gibt es ein Protokoll. Bitte das Meeting löschen."
-        )
+        raise api_error(409, "api.recording_has_protocol")
 
     deleted_files = _delete_files(_recording_files(audio_base))
     if not deleted_files:
-        raise HTTPException(status_code=404, detail="Aufnahme nicht gefunden.")
+        raise api_error(404, "api.recording_not_found")
     return {"success": True, "deleted_files": deleted_files}
 
 
 @app.get("/api/meetings")
 def list_meetings():
+    """All protocols, newest meeting first. Not sorted by file date: a retried analysis writes an older meeting later."""
     meetings = []
-    json_files = sorted(glob.glob(os.path.join(MEETINGS_DIR, "*.json")), key=os.path.getmtime, reverse=True)
-    for jf in json_files:
+    for jf in glob.glob(os.path.join(MEETINGS_DIR, "*.json")):
         try:
             with open(jf, encoding="utf-8") as f:
                 data = json.load(f)
                 base_id = os.path.splitext(os.path.basename(jf))[0]
                 data["id"] = base_id
 
-                # Volltext für Suche (Transkript, Diskussionen, Beschlüsse)
+                # Full text for the search (transcript, discussion, decisions)
                 md_path = os.path.join(MEETINGS_DIR, f"{base_id}.md")
                 if os.path.exists(md_path):
                     with open(md_path, encoding="utf-8") as mf:
@@ -480,6 +519,7 @@ def list_meetings():
                 meetings.append(data)
         except Exception:
             continue
+    meetings.sort(key=lambda m: m.get("meeting_start") or m.get("created_at") or "", reverse=True)
     return meetings
 
 
@@ -488,7 +528,7 @@ def get_meeting(meeting_id: str):
     json_path, md_path = _meeting_paths(meeting_id)
 
     if not os.path.exists(json_path) or not os.path.exists(md_path):
-        raise HTTPException(status_code=404, detail="Meeting nicht gefunden.")
+        raise api_error(404, "api.meeting_not_found")
 
     with open(json_path, encoding="utf-8") as f:
         meta = json.load(f)
@@ -524,7 +564,7 @@ def delete_meeting(meeting_id: str):
 
     deleted_files = _delete_files(candidates)
     if not deleted_files:
-        raise HTTPException(status_code=404, detail="Meeting nicht gefunden.")
+        raise api_error(404, "api.meeting_not_found")
 
     if app_state["last_meeting_id"] == meeting_id:
         app_state["last_meeting_id"] = None
@@ -536,24 +576,30 @@ def delete_meeting(meeting_id: str):
 def get_audio_file(filename: str):
     filepath = _recording_path(filename)
     if not os.path.isfile(filepath):
-        raise HTTPException(status_code=404, detail="Audiodatei nicht gefunden.")
+        raise api_error(404, "api.audio_not_found")
     media_type = "audio/mpeg" if filename.lower().endswith(".mp3") else "audio/wav"
     return FileResponse(filepath, media_type=media_type)
 
 
 @app.post("/api/settings")
 def update_settings(req: SettingsRequest):
-    updates = {"GEMINI_MODEL": req.model.strip() or DEFAULT_MODEL}
-    # Nur aktualisieren wenn ein echter Key übergeben wurde (nicht maskiert mit • oder *)
+    updates = {}
+    if req.model is not None:
+        updates["GEMINI_MODEL"] = req.model.strip() or DEFAULT_MODEL
+    # Only update when a real key was sent, not the masked placeholder (• or *)
     new_key = req.api_key.strip()
     if new_key and "•" not in new_key and "*" not in new_key:
         updates["GEMINI_API_KEY"] = new_key
     if req.default_ai_act_mode is not None:
         updates["AI_ACT_MODE"] = "true" if req.default_ai_act_mode else "false"
+    if req.ui_language is not None:
+        if req.ui_language not in available_languages():
+            raise api_error(400, "api.unknown_language", language=req.ui_language)
+        updates["UI_LANGUAGE"] = req.ui_language
 
     try:
         update_env_file(updates)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise api_error(400, "api.invalid_setting") from e
 
-    return {"success": True, "message": "Einstellungen gespeichert."}
+    return {"success": True}

@@ -6,9 +6,9 @@ Channel 0 (Left): Microphone (You)
 Channel 1 (Right): System Audio (Teams / Other participants)
 """
 
+import logging
 import os
 import subprocess
-import threading
 import time
 import wave
 from datetime import datetime
@@ -16,8 +16,9 @@ from datetime import datetime
 import numpy as np
 import pyaudiowpatch as pyaudio
 
-from utils import format_duration
+from ghostscribe.i18n import LocalizedError
 
+logger = logging.getLogger(__name__)
 RESAMPLE_BLOCK = 1 << 20  # Output samples per processing block; bounds memory use for long meetings
 
 
@@ -100,10 +101,10 @@ class MeetingRecorder:
             default_loopback = MeetingRecorder.find_loopback_device(p)
             wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
             if wasapi_info["defaultInputDevice"] < 0:
-                raise RuntimeError("Kein Mikrofon gefunden!")
+                raise LocalizedError("error.no_microphone")
             default_input = p.get_device_info_by_index(wasapi_info["defaultInputDevice"])
             if not default_loopback:
-                raise RuntimeError("Kein passendes WASAPI Loopback-Gerät für die Standard-Ausgabe gefunden!")
+                raise LocalizedError("error.no_loopback")
             return default_input, default_loopback
         finally:
             if p_instance is None:
@@ -182,7 +183,7 @@ class MeetingRecorder:
             )
         except OSError as e:
             self._release_streams()
-            raise RuntimeError("Das gewählte Audiogerät ist nicht mehr verfügbar. Bitte Gerät neu auswählen.") from e
+            raise LocalizedError("error.device_unavailable") from e
 
         self.mic_frames = []
         self.loopback_frames = []
@@ -216,23 +217,6 @@ class MeetingRecorder:
         self.start_time = time.time()
         self.mic_stream.start_stream()
         self.loopback_stream.start_stream()
-
-        threading.Thread(target=self._console_heartbeat, daemon=True).start()
-
-    def _console_heartbeat(self):
-        """Prints the recording status to the terminal every 5 seconds."""
-        while self.is_recording:
-            time.sleep(5)
-            if not self.is_recording:
-                break
-            try:
-                mic_pct = int(self.mic_level * 100)
-                teams_pct = int(self.loopback_level * 100)
-                print(
-                    f"🔴 [Aufnahme aktiv] {format_duration(self.get_duration())} | Mic: {mic_pct:2d}% | Teams: {teams_pct:2d}% | (Browser-unabhängig)"
-                )
-            except Exception:
-                pass
 
     def get_duration(self):
         """Returns elapsed recording duration in seconds."""
@@ -283,7 +267,7 @@ class MeetingRecorder:
             wf.setframerate(self.target_sample_rate)
             wf.writeframes(stereo.tobytes())
 
-        # Optional MP3-Kompression für 10x schnellere Uploads
+        # Optional MP3 compression for about 10x faster uploads
         return self.compress_to_mp3(output_filepath) if compress else output_filepath
 
     def stop(self, custom_filename=None, compress=True):
@@ -323,10 +307,7 @@ class MeetingRecorder:
             ]
             subprocess.run(cmd, capture_output=True, check=True)
             if os.path.exists(mp3_filepath) and os.path.getsize(mp3_filepath) > 0:
-                print(
-                    f"[recorder] Komprimiert zu MP3: {os.path.basename(mp3_filepath)} ({os.path.getsize(mp3_filepath) // 1024} KB)"
-                )
                 return mp3_filepath
         except Exception as e:
-            print(f"[recorder] Hinweis: FFmpeg-Kompression nicht ausgeführt ({e}). Nutze WAV-Original.")
+            logger.warning("MP3 compression skipped, using the WAV file (%s)", e)
         return wav_filepath

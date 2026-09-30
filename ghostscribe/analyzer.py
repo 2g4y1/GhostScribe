@@ -6,6 +6,7 @@ and generates a structured meeting protocol including transcript, summary, and a
 
 import itertools
 import json
+import logging
 import os
 import re
 import time
@@ -16,11 +17,14 @@ import numpy as np
 from google import genai
 from google.genai import types
 
-from utils import format_duration
+from ghostscribe.i18n import LocalizedError
+from ghostscribe.utils import format_duration
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-flash-latest"
 
-# Zusätzliche Anweisungen je Besprechungstyp
+# Additional instructions per meeting type
 MEETING_TYPE_FOCUS = {
     "standard": "Fokus: Ergebnisse, Beschlüsse und Aufgaben. Kein Zusatzabschnitt.",
     "sprint": (
@@ -181,9 +185,9 @@ _MOOD_SECTION = """## 🎭 Stimmungsbild
 
 """
 
-# Modusabhängige Bausteine des System-Prompts
+# Mode-dependent parts of the system prompt
 _PROMPT_VARIANTS = {
-    True: {  # EU AI Act konform (Standard): keine Emotions- und Stimmungsanalyse
+    True: {  # EU AI Act compliant (default): no emotion or sentiment analysis
         "intro": "Du bist ein sachlicher, neutraler Protokoll-Assistent für Online-Besprechungen (Microsoft Teams, Zoom u. ä.). Du erhältst eine Audioaufnahme und Kontextdaten. Du erfasst das Gesagte, ordnest es den Sprechern zu und erstellst daraus ein rein faktenbasiertes, rechtssicheres deutschsprachiges Protokoll in Markdown gemäß den Grundsätzen des EU AI Acts (Art. 5 Abs. 1 lit. f KI-VO – Verzicht auf Emotions- und Stimmungsanalyse von Personen am Arbeitsplatz).",
         "no_emotion_rule": "\n7. EU AI Act Konformität (Keine Emotionsanalyse): Bewerte, interpretiere oder erfasse zu keinem Zeitpunkt Emotionen, psychologische Gemütszustände, Frustration, Zufriedenheit oder persönliche Stimmungen der Teilnehmer. Das Protokoll bleibt strikt sachlich, objektiv und faktenorientiert.",
         "sentiment_section": "",
@@ -195,7 +199,7 @@ _PROMPT_VARIANTS = {
         "task_reason": "Begründung: <kurz, z. B. „Blocker für Release“>",
         "tone_line": "",
     },
-    False: {  # Erweiterte Analyse inkl. Stimmung & Tonalität
+    False: {  # Extended analysis including mood and tone
         "intro": "Du bist ein Protokoll-Assistent für Online-Besprechungen (Microsoft Teams, Zoom u. ä.). Du erhältst eine Audioaufnahme und Kontextdaten. Du erfasst das Gesagte, ordnest es den Sprechern zu, erfasst Stimmung und Tonalität und erstellst daraus ein deutschsprachiges Protokoll in Markdown.",
         "no_emotion_rule": "",
         "sentiment_section": _SENTIMENT_SECTION,
@@ -213,7 +217,7 @@ _PROMPT_VARIANTS = {
 def get_system_instruction(ai_act_mode: bool = True) -> str:
     """Returns the system prompt for the EU AI Act mode (default) or the extended sentiment mode."""
     prompt = _SYSTEM_PROMPT_TEMPLATE.format(**_PROMPT_VARIANTS[bool(ai_act_mode)])
-    # Abschnitte fortlaufend nummerieren: "# §." -> "# 1.", "# 2.", ...
+    # Number the sections consecutively: "# §." -> "# 1.", "# 2.", ...
     numbers = itertools.count(1)
     return re.sub(r"^# §\.", lambda _: f"# {next(numbers)}.", prompt, flags=re.MULTILINE)
 
@@ -316,7 +320,7 @@ def extract_channel_activity_summary(audio_filepath: str, chunk_sec: float = 0.5
         lines += [f"[{format_duration(s)}–{format_duration(e)}] {labels[lbl]}" for lbl, s, e in merged]
         return "\n".join(lines)
     except Exception as e:
-        print(f"[MeetingAnalyzer] Hinweis bei Hardware-Kanal-Analyse: {e}")
+        logger.warning("Channel analysis skipped: %s", e)
         return ""
 
 
@@ -328,9 +332,7 @@ class MeetingAnalyzer:
         os.makedirs(self.meetings_dir, exist_ok=True)
 
         if not self.api_key:
-            raise ValueError(
-                "Kein GEMINI_API_KEY gefunden! Bitte trage deinen API Key in die .env Datei ein oder übergebe ihn."
-            )
+            raise LocalizedError("error.no_api_key")
 
         self.client = genai.Client(api_key=self.api_key)
 
@@ -347,9 +349,12 @@ class MeetingAnalyzer:
         on_status_update=None,
         ai_act_mode=True,
     ):
-        """Uploads audio & optional slides/chat to Gemini, requests analysis, and saves markdown report."""
+        """
+        Uploads audio & optional slides/chat to Gemini, requests analysis, and saves markdown report.
+        on_status_update(key, **params) receives progress as translation keys of the locale files.
+        """
         if not os.path.exists(audio_filepath):
-            raise FileNotFoundError(f"Audiodatei nicht gefunden: {audio_filepath}")
+            raise LocalizedError("error.audio_file_missing", path=audio_filepath)
 
         user_label = user_name.strip() if user_name and user_name.strip() else "Ich"
         uploaded_remote_files = []
@@ -361,40 +366,42 @@ class MeetingAnalyzer:
             except Exception:
                 duration = "nicht genannt"
 
-        def log(msg):
-            print(f"[MeetingAnalyzer] {msg}")
+        def report(key, **params):
             if on_status_update:
-                on_status_update(msg)
+                on_status_update(key, **params)
 
         try:
-            log(f"Lade Audiodatei hoch ({os.path.basename(audio_filepath)})...")
+            report("step.uploading_audio", name=os.path.basename(audio_filepath))
             uploaded_file = self.client.files.upload(file=audio_filepath)
             uploaded_remote_files.append(uploaded_file)
-            log(f"Upload abgeschlossen. File-URI: {uploaded_file.name}")
+            report("step.upload_done")
 
-            # Warten, falls die Datei noch von Gemini verarbeitet wird
+            # Wait while Gemini is still processing the file
             while uploaded_file.state.name == "PROCESSING":
-                log("Gemini verarbeitet Audiodatei...")
+                report("step.gemini_processing")
                 time.sleep(2)
                 uploaded_file = self.client.files.get(name=uploaded_file.name)
 
             if uploaded_file.state.name == "FAILED":
-                raise RuntimeError(f"Audiodatei-Verarbeitung bei Google fehlgeschlagen: {uploaded_file.error}")
+                raise LocalizedError("error.google_processing_failed", error=uploaded_file.error)
 
-            # Zusätzliche Folien / Screenshots hochladen
+            # Upload additional slides / screenshots
             uploaded_images = []
             if image_filepaths:
                 for idx, img_path in enumerate(image_filepaths):
                     if os.path.exists(img_path):
-                        log(
-                            f"Lade Folie/Screenshot {idx + 1}/{len(image_filepaths)} hoch ({os.path.basename(img_path)})..."
+                        report(
+                            "step.uploading_image",
+                            index=idx + 1,
+                            total=len(image_filepaths),
+                            name=os.path.basename(img_path),
                         )
                         try:
                             up_img = self.client.files.upload(file=img_path)
                             uploaded_images.append(up_img)
                             uploaded_remote_files.append(up_img)
                         except Exception as img_err:
-                            log(f"Warnung: Bild '{img_path}' konnte nicht hochgeladen werden: {img_err}")
+                            report("step.image_upload_failed", name=os.path.basename(img_path), error=img_err)
 
             specific_focus = MEETING_TYPE_FOCUS.get(meeting_type, MEETING_TYPE_FOCUS["standard"])
 
@@ -467,9 +474,7 @@ Die beigefügten Bilder zeigen geteilte Bildschirminhalte / Folien aus dem Meeti
 Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbinde sie mit den Aussagen der Sprecher.
 """
 
-            log(f"Generiere Protokoll mit Modell '{self.model}'...")
-
-            # Robuste Modell-Reihenfolge: primäres Modell, gefolgt von modernen Fallbacks
+            # Try the configured model first, then the fallback models
             models_to_try = [self.model]
             for fb in [DEFAULT_MODEL, "gemini-3-flash-preview", "gemini-2.5-flash"]:
                 if fb not in models_to_try:
@@ -480,10 +485,9 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
             instruction_to_use = get_system_instruction(ai_act_mode)
             response = None
             last_error = None
-            mode_desc = "EU AI Act konform (Sachlich & Neutral)" if ai_act_mode else "Mit Stimmungsanalyse"
             for current_model in models_to_try:
                 try:
-                    log(f"Sende Anfrage an Modell '{current_model}' (Modus: {mode_desc})...")
+                    report("step.requesting", model=current_model)
                     response = self.client.models.generate_content(
                         model=current_model,
                         contents=contents,
@@ -495,11 +499,11 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
                     self.model = current_model
                     break
                 except Exception as e:
-                    log(f"Fehler mit Modell '{current_model}': {e}")
+                    report("step.model_failed", model=current_model, error=e)
                     last_error = e
 
             if response is None:
-                raise RuntimeError(f"Keines der Modelle konnte eine Antwort generieren: {last_error}")
+                raise LocalizedError("error.all_models_failed", error=last_error)
 
             markdown_content = response.text or ""
             if not markdown_content and hasattr(response, "candidates") and response.candidates:
@@ -515,12 +519,10 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
                 markdown_content = "*(Keine Zusammenfassung generiert. Die Audiodatei war möglicherweise zu kurz, enthielt keine Sprache oder wurde gefiltert.)*"
 
             if response.candidates and response.candidates[0].finish_reason == types.FinishReason.MAX_TOKENS:
-                log("Warnung: Ausgabelimit des Modells erreicht – das Protokoll ist unvollständig.")
+                report("step.output_truncated")
                 markdown_content += "\n\n> ⚠️ **Hinweis:** Das Protokoll wurde am Ausgabelimit des Modells abgeschnitten und ist unvollständig."
 
-            log("Analyse erfolgreich abgeschlossen!")
-
-            # Speichern als Markdown & JSON
+            # Save as Markdown & JSON
             base_name = os.path.splitext(os.path.basename(audio_filepath))[0]
             md_filename = os.path.join(self.meetings_dir, f"{base_name}.md")
             json_filename = os.path.join(self.meetings_dir, f"{base_name}.json")
@@ -531,7 +533,7 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
             extracted_title = extract_title_from_markdown(markdown_content)
             if is_generic_title and extracted_title:
                 final_title = extracted_title
-                log(f"Thema automatisch erkannt: '{final_title}'")
+                report("step.title_detected", title=final_title)
             else:
                 final_title = clean_input_title or extracted_title or base_name
 
@@ -561,10 +563,10 @@ Analysiere die gezeigten Diagramme, Tabellen, Kennzahlen oder Folien und verbind
             }
 
         finally:
-            # Temporäre Dateien bei Google immer sauber bereinigen
+            # Always delete the temporary files at Google
             for up_file in uploaded_remote_files:
                 try:
                     self.client.files.delete(name=up_file.name)
-                    log(f"Temporäre Remote-Datei '{up_file.name}' bei Google bereinigt.")
+                    report("step.remote_file_deleted", name=up_file.name)
                 except Exception as e:
-                    log(f"Hinweis: Konnte Remote-Datei '{up_file.name}' nicht löschen: {e}")
+                    report("step.remote_file_delete_failed", name=up_file.name, error=e)

@@ -6,46 +6,46 @@ rem GhostScribe setup: creates .venv and installs the Python dependencies.
 rem Runs from start.bat ("/nopause") or on its own via double-click.
 
 echo ============================================================
-echo   GhostScribe - Einrichtung
+echo   GhostScribe - Setup
 echo ============================================================
 echo.
 
-rem Python 3.11+ suchen. Zuerst der py-Launcher, weil "python" auch der
-rem Microsoft-Store-Platzhalter ohne echte Installation sein kann.
+rem Look for Python 3.11+. The py launcher comes first because "python"
+rem can also be the Microsoft Store placeholder without a real installation.
 set "PYTHON_CMD="
 py -3 -c "import sys; sys.exit(sys.version_info < (3, 11))" >nul 2>nul && set "PYTHON_CMD=py -3"
 if not defined PYTHON_CMD python -c "import sys; sys.exit(sys.version_info < (3, 11))" >nul 2>nul && set "PYTHON_CMD=python"
 if not defined PYTHON_CMD goto :no_python
-for /f "delims=" %%v in ('%PYTHON_CMD% --version 2^>^&1') do echo [1/3] %%v gefunden.
+for /f "delims=" %%v in ('%PYTHON_CMD% --version 2^>^&1') do echo [1/3] Found %%v.
 
 if exist ".venv\Scripts\python.exe" goto :install
-echo [2/3] Erstelle die virtuelle Umgebung .venv ...
+echo [2/3] Creating the virtual environment .venv ...
 %PYTHON_CMD% -m venv .venv || goto :failed
 
 :install
-echo [3/3] Installiere die Bibliotheken, beim ersten Mal dauert das 1-2 Minuten ...
+echo [3/3] Installing the libraries, the first time takes 1-2 minutes ...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip --quiet --disable-pip-version-check || goto :failed
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt --disable-pip-version-check || goto :failed
 copy /y requirements.txt ".venv\installed-requirements.txt" >nul
 if not exist ".env" copy ".env.example" ".env" >nul
 
 echo.
-echo Einrichtung abgeschlossen. GhostScribe startet mit start.bat
+echo Setup complete. Start GhostScribe with start.bat
 if /i not "%~1"=="/nopause" pause
 exit /b 0
 
 :no_python
-echo [FEHLER] Python 3.11 oder neuer wurde nicht gefunden.
+echo [ERROR] Python 3.11 or newer was not found.
 echo.
 echo Download: https://www.python.org/downloads/
-echo Im Installer "Add python.exe to PATH" anhaken, oder in PowerShell:
+echo In the installer, tick "Add python.exe to PATH", or run in PowerShell:
 echo   winget install Python.Python.3.12
 goto :end_failed
 
 :failed
 echo.
-echo [FEHLER] Die Einrichtung ist fehlgeschlagen. Bitte die Internetverbindung
-echo pruefen und das Skript erneut starten.
+echo [ERROR] Setup failed. Please check the internet connection and run
+echo this script again.
 
 :end_failed
 if /i not "%~1"=="/nopause" pause
