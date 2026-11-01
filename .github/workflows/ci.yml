@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.13"
+          python-version: "3.15"
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - run: pip install --require-hashes -r requirements-dev.txt
@@ -43,9 +43,9 @@ jobs:
       - run: npm run lint
       - name: Shell scripts
         run: shellcheck -s sh start.sh start.command install_requirements.sh
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.8.17" # the same version as "constraints" in renovate.json: the output must not differ
+          version: "0.13.6" # the same version as "constraints" in renovate.json: the output must not differ
       - name: Lock files match pyproject.toml
         run: |
           uv pip compile pyproject.toml --universal --python-version=3.11 --generate-hashes --output-file=requirements.txt --quiet
@@ -86,6 +86,6 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.13"
+          python-version: "3.15"
       - name: The release archive builds and contains only allowed files
         run: python scripts/build_release.py
